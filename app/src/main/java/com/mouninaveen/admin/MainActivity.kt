@@ -34,7 +34,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = darkColorScheme(
+                primary = androidx.compose.ui.graphics.Color(0xFFB9A3FF),
+                secondary = androidx.compose.ui.graphics.Color(0xFF67D7C5),
+                surface = androidx.compose.ui.graphics.Color(0xFF1B2040),
+                background = androidx.compose.ui.graphics.Color(0xFF10152E)
+            )) {
                 AdminScreen()
             }
         }
@@ -169,7 +174,7 @@ private fun AdminScreen() {
             .get()
             .await()
 
-        events = snapshot.documents.map { document ->
+        events = snapshot.documents.filter { it.getString("eventType") in listOf("SCREEN_LOCKED", "SCREEN_UNLOCKED") }.map { document ->
             EventRow(
                 id = document.id,
                 app = document.getString("applicationLabel")
@@ -187,7 +192,7 @@ private fun AdminScreen() {
 
         selectedDevice = device
 
-        status = "Loaded ${events.size} usage events. Android may delay or omit some events."
+        status = "Loaded ${events.size} lock/unlock events. Android may delay or omit events."
     }
 
     val visibleEvents = events.filter { event ->
@@ -224,7 +229,7 @@ private fun AdminScreen() {
                     )
 
                     Text(
-                        "Admin Dashboard",
+                        "Control Center",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -330,8 +335,8 @@ private fun AdminScreen() {
                     }
                 }
 
-                TabRow(selectedTabIndex = selectedTab) {
-                    listOf("Overview", "Devices", "Activity").forEachIndexed { index, name ->
+                ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp) {
+                    listOf("Overview", "Devices", "Lock timeline", "Calls", "Settings").forEachIndexed { index, name ->
                         Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(name) })
                     }
                 }
@@ -339,15 +344,30 @@ private fun AdminScreen() {
                     val now = System.currentTimeMillis()
                     val recent = devices.count { it.lastSyncMillis > now - 60 * 60 * 1000L }
                     val stopped = devices.count { !it.enabled }
-                    Text("Fleet overview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Security overview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Manage approved devices and review keyguard status history.", style = MaterialTheme.typography.bodyMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         MetricCard("Devices", devices.size.toString(), Modifier.weight(1f))
                         MetricCard("Recent sync", recent.toString(), Modifier.weight(1f))
                         MetricCard("Stopped", stopped.toString(), Modifier.weight(1f))
                     }
-                    Text("Recent sync means a successful report in the past hour, not live device presence.", style = MaterialTheme.typography.bodySmall)
+                    Text("Recent sync means a report in the past hour, not live device presence.", style = MaterialTheme.typography.bodySmall)
+                    ElevatedCard {
+                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Lock / unlock activity", style = MaterialTheme.typography.titleMedium)
+                            Text("Select a device under Devices to see event history and timestamps.")
+                            Button(onClick = { selectedTab = 1 }) { Text("View managed devices") }
+                        }
+                    }
+                    ElevatedCard {
+                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Call history", style = MaterialTheme.typography.titleMedium)
+                            Text("No remote call data is requested. A user-controlled export workflow is required.")
+                            OutlinedButton(onClick = { selectedTab = 3 }) { Text("Open call history") }
+                        }
+                    }
                 }
-                if (selectedTab != 2) {
+                if (selectedTab == 1) {
                 Card(
                     shape = RoundedCornerShape(18.dp)
                 ) {
@@ -443,6 +463,7 @@ private fun AdminScreen() {
                                     .clickable {
                                         runTask {
                                             loadEvents(device)
+                                            selectedTab = 2
                                         }
                                     },
                                 shape = RoundedCornerShape(16.dp)
@@ -485,7 +506,7 @@ private fun AdminScreen() {
                                         }
                                     }) { Text(if (device.enabled) "Disable enrollment" else "Enable enrollment") }
                                     Text(
-                                        "Tap to view activity",
+                                        "Tap to view lock/unlock timeline",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -496,7 +517,16 @@ private fun AdminScreen() {
                 }
 
                 }
-                if (selectedTab != 1) selectedDevice?.let { device ->
+                if (selectedTab == 2 && selectedDevice == null) {
+                    ElevatedCard {
+                        Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                            Text("No device selected", style = MaterialTheme.typography.titleLarge)
+                            Text("Open Devices and tap a device to view its lock and unlock history.")
+                            Button(onClick = { selectedTab = 1 }) { Text("Choose device") }
+                        }
+                    }
+                }
+                if (selectedTab == 2) selectedDevice?.let { device ->
 
                     HorizontalDivider()
 
@@ -505,7 +535,7 @@ private fun AdminScreen() {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "Usage Activity",
+                                "Lock / Unlock Timeline",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -519,7 +549,7 @@ private fun AdminScreen() {
                         TextButton(
                             onClick = {
                                 val csv = buildString {
-                                    append("Timestamp,Event,Application,Package\n")
+                                    append("Timestamp,Event\n")
 
                                     events.forEach { event ->
                                         append(
@@ -528,12 +558,7 @@ private fun AdminScreen() {
                                         append(
                                             "\"${csvEscape(event.eventType)}\","
                                         )
-                                        append(
-                                            "\"${csvEscape(event.app)}\","
-                                        )
-                                        append(
-                                            "\"${csvEscape(event.packageName)}\"\n"
-                                        )
+                                        append("\n")
                                     }
                                 }
 
@@ -543,7 +568,7 @@ private fun AdminScreen() {
                                     type = "text/csv"
                                     putExtra(
                                         Intent.EXTRA_SUBJECT,
-                                        "Usage activity - ${device.name}"
+                                        "Lock timeline - ${device.name}"
                                     )
                                     putExtra(
                                         Intent.EXTRA_TEXT,
@@ -554,7 +579,7 @@ private fun AdminScreen() {
                                 context.startActivity(
                                     Intent.createChooser(
                                         intent,
-                                        "Export usage CSV"
+                                        "Export lock events CSV"
                                     )
                                 )
                             }
@@ -563,21 +588,13 @@ private fun AdminScreen() {
                         }
                     }
 
-                    OutlinedTextField(
-                        value = searchText,
-                        onValueChange = { searchText = it },
-                        label = { Text("Search app or package") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
 
                     Row(
                         modifier = Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         listOf(
-                            "ALL", "APP_FOREGROUND", "APP_BACKGROUND",
-                            "SCREEN_LOCKED", "SCREEN_UNLOCKED"
+                            "ALL", "SCREEN_LOCKED", "SCREEN_UNLOCKED"
                         ).forEach { type ->
 
                             FilterChip(
@@ -613,14 +630,10 @@ private fun AdminScreen() {
                                     .padding(vertical = 6.dp)
                             ) {
                                 Text(
-                                    "${event.eventType.replace('_', ' ')} • ${event.app}",
+                                    if (event.eventType == "SCREEN_LOCKED") "Locked" else "Unlocked",
                                     fontWeight = FontWeight.Medium
                                 )
 
-                                Text(
-                                    event.packageName,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
 
                                 Text(
                                     if (event.timestamp > 0L)
@@ -634,6 +647,33 @@ private fun AdminScreen() {
                         }
                     }
                 }
+                if (selectedTab == 3) {
+                    ElevatedCard {
+                        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Call History", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                            Text("No call history shared", style = MaterialTheme.typography.titleMedium)
+                            Text("The Collector does not read or automatically upload call logs. Android restricts access to call history. This page is reserved for an explicit, device-owner-initiated sharing workflow.")
+                            HorizontalDivider()
+                            Text("Available when user shares: call type, date, time and duration, subject to approval and permitted access.")
+                            Text("Call recordings and conversation contents are never part of this screen.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                if (selectedTab == 4) {
+                    ElevatedCard {
+                        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Settings & Privacy", style = MaterialTheme.typography.headlineMedium)
+                            Text("Administrator: ${auth.currentUser?.email.orEmpty()}")
+                            Text("Enrolled devices: ${devices.size}")
+                            Text("Allowed automatic uploads: device lock and unlock events only.")
+                            Text("Call history: no automatic collection.")
+                            Text("Sync timing: Android-managed periodic work; not guaranteed instantaneous.")
+                            HorizontalDivider()
+                            Text("To revoke collection, disable a device on the Devices page. The device owner can also withdraw consent in the Collector.")
+                            OutlinedButton(onClick = { runTask { loadDevices() } }, enabled = !busy) { Text("Refresh devices") }
+                        }
+                    }
+                }
             }
 
             Text(
@@ -643,10 +683,7 @@ private fun AdminScreen() {
             )
 
             Text(
-                "Privacy: Displays permitted usage-event metadata only. " +
-                    "No message contents, calls, photos, microphone, camera, " +
-                    "or screen recordings are accessed. Android may delay " +
-                    "or omit usage events.",
+                "Privacy: Only lock/unlock metadata is uploaded. No app activity, call history, messages or private content is collected. Android may delay events.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
