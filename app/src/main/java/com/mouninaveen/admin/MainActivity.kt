@@ -45,7 +45,9 @@ private data class DeviceRow(
     val name: String,
     val collectorUid: String,
     val lastSync: String,
-    val syncStatus: String
+    val syncStatus: String,
+    val lastSyncMillis: Long,
+    val enabled: Boolean
 )
 
 private data class EventRow(
@@ -91,6 +93,7 @@ private fun AdminScreen() {
     var displayName by remember { mutableStateOf("OnePlus") }
     var searchText by remember { mutableStateOf("") }
     var eventFilter by remember { mutableStateOf("ALL") }
+    var selectedTab by remember { mutableStateOf(0) }
 
     fun runTask(block: suspend () -> Unit) {
         scope.launch {
@@ -144,7 +147,9 @@ private fun AdminScreen() {
                     ?.let { formatDate(it.time) }
                     ?: "Never",
                 syncStatus = document.getString("lastSyncStatus")
-                    ?: "Not reported"
+                    ?: "Not reported",
+                lastSyncMillis = document.getTimestamp("lastSyncAt")?.toDate()?.time ?: 0L,
+                enabled = document.getBoolean("enabled") != false
             )
         }
 
@@ -324,6 +329,24 @@ private fun AdminScreen() {
                     }
                 }
 
+                PrimaryTabRow(selectedTabIndex = selectedTab) {
+                    listOf("Overview", "Devices", "Activity").forEachIndexed { index, name ->
+                        Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(name) })
+                    }
+                }
+                if (selectedTab == 0) {
+                    val now = System.currentTimeMillis()
+                    val recent = devices.count { it.lastSyncMillis > now - 60 * 60 * 1000L }
+                    val stopped = devices.count { !it.enabled }
+                    Text("Fleet overview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MetricCard("Devices", devices.size.toString(), Modifier.weight(1f))
+                        MetricCard("Recent sync", recent.toString(), Modifier.weight(1f))
+                        MetricCard("Stopped", stopped.toString(), Modifier.weight(1f))
+                    }
+                    Text("Recent sync means a successful report in the past hour, not live device presence.", style = MaterialTheme.typography.bodySmall)
+                }
+                if (selectedTab != 2) {
                 Card(
                     shape = RoundedCornerShape(18.dp)
                 ) {
@@ -408,9 +431,7 @@ private fun AdminScreen() {
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.weight(
-                            if (selectedDevice == null) 1f else 0.40f
-                        ),
+                        modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(devices, key = { it.id }) { device ->
@@ -450,6 +471,19 @@ private fun AdminScreen() {
                                     )
 
                                     Text(
+                                        "Enrollment: ${if (device.enabled) "Active" else "Disabled"}",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    OutlinedButton(enabled = !busy, onClick = {
+                                        runTask {
+                                            verifyAdmin()
+                                            db.collection("devices").document(device.id)
+                                                .update("enabled", !device.enabled).await()
+                                            loadDevices()
+                                            status = if (device.enabled) "Enrollment disabled." else "Enrollment enabled."
+                                        }
+                                    }) { Text(if (device.enabled) "Disable enrollment" else "Enable enrollment") }
+                                    Text(
                                         "Tap to view activity",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary
@@ -460,7 +494,8 @@ private fun AdminScreen() {
                     }
                 }
 
-                selectedDevice?.let { device ->
+                }
+                if (selectedTab != 1) selectedDevice?.let { device ->
 
                     HorizontalDivider()
 
@@ -536,14 +571,12 @@ private fun AdminScreen() {
                     )
 
                     Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         listOf(
-                            "ALL",
-                            "APP_FOREGROUND",
-                            "APP_BACKGROUND",
-                            "SCREEN_LOCKED",
-                            "SCREEN_UNLOCKED"
+                            "ALL", "APP_FOREGROUND", "APP_BACKGROUND",
+                            "SCREEN_LOCKED", "SCREEN_UNLOCKED"
                         ).forEach { type ->
 
                             FilterChip(
@@ -568,7 +601,7 @@ private fun AdminScreen() {
                     )
 
                     LazyColumn(
-                        modifier = Modifier.weight(0.60f),
+                        modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         items(visibleEvents, key = { it.id }) { event ->
@@ -629,4 +662,14 @@ private fun formatDate(millis: Long): String {
 
 private fun csvEscape(value: String): String {
     return value.replace("\"", "\"\"")
+}
+
+@Composable
+private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
+    ElevatedCard(modifier) {
+        Column(Modifier.padding(12.dp)) {
+            Text(value, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(label, style = MaterialTheme.typography.labelMedium)
+        }
+    }
 }
