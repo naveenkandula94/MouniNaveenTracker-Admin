@@ -56,6 +56,15 @@ private data class DeviceRow(
     val enabled: Boolean
 )
 
+private data class SharedCallRow(
+    val id: String,
+    val number: String,
+    val direction: String,
+    val timestamp: Long,
+    val durationSeconds: Int,
+    val sharedAt: Long
+)
+
 private data class EventRow(
     val id: String,
     val app: String,
@@ -100,6 +109,8 @@ private fun AdminScreen() {
     var searchText by remember { mutableStateOf("") }
     var eventFilter by remember { mutableStateOf("ALL") }
     var selectedTab by remember { mutableStateOf(0) }
+    var callDevice by remember { mutableStateOf<DeviceRow?>(null) }
+    var sharedCalls by remember { mutableStateOf(emptyList<SharedCallRow>()) }
 
     fun runTask(block: suspend () -> Unit) {
         scope.launch {
@@ -193,6 +204,26 @@ private fun AdminScreen() {
         selectedDevice = device
 
         status = "Loaded ${events.size} lock/unlock events. Android may delay or omit events."
+    }
+
+    suspend fun loadSharedCalls(device: DeviceRow) {
+        verifyAdmin()
+        val snapshot = db.collection("devices").document(device.id)
+            .collection("callLogs")
+            .orderBy("callTimestamp", Query.Direction.DESCENDING)
+            .limit(200).get().await()
+        sharedCalls = snapshot.documents.map { document ->
+            SharedCallRow(
+                id = document.id,
+                number = document.getString("number") ?: "Unknown",
+                direction = document.getString("direction") ?: "UNKNOWN",
+                timestamp = document.getTimestamp("callTimestamp")?.toDate()?.time ?: 0L,
+                durationSeconds = document.getLong("durationSeconds")?.toInt() ?: 0,
+                sharedAt = document.getTimestamp("sharedAt")?.toDate()?.time ?: 0L
+            )
+        }
+        callDevice = device
+        status = "Loaded ${sharedCalls.size} manually shared call records for ${device.name}."
     }
 
     val visibleEvents = events.filter { event ->
@@ -362,7 +393,7 @@ private fun AdminScreen() {
                     ElevatedCard {
                         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Call history", style = MaterialTheme.typography.titleMedium)
-                            Text("No remote call data is requested. A user-controlled export workflow is required.")
+                            Text("View records explicitly imported and approved in the Collector. No automatic call-history extraction.")
                             OutlinedButton(onClick = { selectedTab = 3 }) { Text("Open call history") }
                         }
                     }
@@ -648,16 +679,77 @@ private fun AdminScreen() {
                     }
                 }
                 if (selectedTab == 3) {
-                    ElevatedCard {
-                        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("Call History", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                            Text("No call history shared", style = MaterialTheme.typography.titleMedium)
-                            Text("The Collector does not read or automatically upload call logs. Android restricts access to call history. This page is reserved for an explicit, device-owner-initiated sharing workflow.")
-                            HorizontalDivider()
-                            Text("Available when user shares: call type, date, time and duration, subject to approval and permitted access.")
-                            Text("Call recordings and conversation contents are never part of this screen.", style = MaterialTheme.typography.bodySmall)
+                    Text("Call History", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text("User-approved call records stored in Firebase", style = MaterialTheme.typography.bodySmall)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        devices.forEach { device ->
+                            FilterChip(
+                                selected = callDevice?.id == device.id,
+                                onClick = { runTask { loadSharedCalls(device) } },
+                                label = { Text(device.name) }
+                            )
                         }
                     }
+                    if (devices.isEmpty()) {
+                        Text("No enrolled devices. Add a collector from Devices.")
+                    } else if (callDevice == null) {
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(20.dp)) {
+                                Text("Select a device", style = MaterialTheme.typography.titleMedium)
+                                Text("Only records explicitly selected and approved in the Collector are displayed here.")
+                            }
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "${sharedCalls.size} shared calls • ${callDevice?.name.orEmpty()}",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            OutlinedButton(
+                                enabled = !busy,
+                                onClick = { callDevice?.let { selected -> runTask { loadSharedCalls(selected) } } }
+                            ) { Text("Refresh") }
+                        }
+                        if (sharedCalls.isEmpty()) {
+                            ElevatedCard(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(20.dp)) {
+                                    Text("No call records shared", style = MaterialTheme.typography.titleMedium)
+                                    Text("On the Collector, choose a CSV, review the call details, and approve uploading selected records.")
+                                }
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(sharedCalls, key = { it.id }) { record ->
+                                    ElevatedCard(Modifier.fillMaxWidth()) {
+                                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(record.direction.replace('_', ' '), style = MaterialTheme.typography.labelLarge)
+                                                Spacer(Modifier.weight(1f))
+                                                Text("${record.durationSeconds}s", style = MaterialTheme.typography.bodyMedium)
+                                            }
+                                            Text(record.number, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                if (record.timestamp > 0L) formatDate(record.timestamp) else "Unknown date",
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                            Text(
+                                                "Shared: " + if (record.sharedAt > 0L) formatDate(record.sharedAt) else "Pending server timestamp",
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Text("Only owner-approved imports are shown. No call recordings or message contents.", style = MaterialTheme.typography.labelSmall)
                 }
                 if (selectedTab == 4) {
                     ElevatedCard {
@@ -666,7 +758,7 @@ private fun AdminScreen() {
                             Text("Administrator: ${auth.currentUser?.email.orEmpty()}")
                             Text("Enrolled devices: ${devices.size}")
                             Text("Allowed automatic uploads: device lock and unlock events only.")
-                            Text("Call history: no automatic collection.")
+                            Text("Call history: CSV import, per-upload approval, and device-scoped Firebase storage.")
                             Text("Sync timing: Android-managed periodic work; not guaranteed instantaneous.")
                             HorizontalDivider()
                             Text("To revoke collection, disable a device on the Devices page. The device owner can also withdraw consent in the Collector.")
@@ -683,7 +775,7 @@ private fun AdminScreen() {
             )
 
             Text(
-                "Privacy: Only lock/unlock metadata is uploaded. No app activity, call history, messages or private content is collected. Android may delay events.",
+                "Privacy: Lock/unlock events sync separately. Call history is stored only after the device owner explicitly imports and approves selected records.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
