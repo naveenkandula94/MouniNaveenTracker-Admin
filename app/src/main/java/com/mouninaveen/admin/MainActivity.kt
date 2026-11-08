@@ -474,6 +474,15 @@ private fun AdminScreen() {
                                         "Enrollment: ${if (device.enabled) "Active" else "Disabled"}",
                                         style = MaterialTheme.typography.bodySmall
                                     )
+                                    OutlinedButton(enabled = !busy, onClick = {
+                                        runTask {
+                                            verifyAdmin()
+                                            db.collection("devices").document(device.id)
+                                                .update("enabled", !device.enabled).await()
+                                            loadDevices()
+                                            status = if (device.enabled) "Enrollment disabled." else "Enrollment enabled."
+                                        }
+                                    }) { Text(if (device.enabled) "Disable enrollment" else "Enable enrollment") }
                                     Text(
                                         "Tap to view activity",
                                         style = MaterialTheme.typography.labelMedium,
