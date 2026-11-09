@@ -48,6 +48,8 @@ fun SimpleAdminScreen() {
     var selectedCallIds by remember { mutableStateOf(emptySet<String>()) }
     var deleteMode by remember { mutableStateOf("") }
     var diagnosticsVersion by remember { mutableIntStateOf(0) }
+    var showDiagnostics by remember { mutableStateOf(false) }
+    var showAudioHistory by remember { mutableStateOf(false) }
 
     suspend fun verifyAndLoad() {
         val uid = auth.currentUser?.uid ?: error("Sign in first.")
@@ -191,28 +193,36 @@ fun SimpleAdminScreen() {
                             OutlinedButton(enabled = !loading, onClick = {
                                 run {
                                     verifyAndLoad()
-                                    diagnosticText = "Admin permission and device query: OK"
+                                    diagnosticText = "Connected — account role and device permissions verified."
                                 }
-                            }) { Text("Test Firebase connection") }
+                            }) { Text("Check Firebase connection") }
                             Text(diagnosticText, style = MaterialTheme.typography.bodySmall)
                             HorizontalDivider()
-                            Text("App diagnostic logs", style = MaterialTheme.typography.titleMedium)
-                            Text("Local connection and permission events. No microphone audio or call numbers are stored here.",
+                            Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
+                            Text("Connection history is stored locally and excludes audio and call numbers.",
                                 style = MaterialTheme.typography.bodySmall)
-                            key(diagnosticsVersion) {
-                                Text(AdminDiagnostics.read(context), style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = { showDiagnostics = !showDiagnostics }) {
+                                Text(if (showDiagnostics) "Hide diagnostic logs" else "View diagnostic logs")
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(onClick = { diagnosticsVersion++ }) { Text("Refresh logs") }
-                                OutlinedButton(onClick = {
-                                    AdminDiagnostics.clear(context)
-                                    diagnosticsVersion++
-                                }) { Text("Clear logs") }
+                            if (showDiagnostics) {
+                                key(diagnosticsVersion) {
+                                    Text(AdminDiagnostics.read(context), style = MaterialTheme.typography.bodySmall)
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(onClick = { diagnosticsVersion++ }) { Text("Refresh") }
+                                    OutlinedButton(onClick = {
+                                        AdminDiagnostics.clear(context)
+                                        diagnosticsVersion++
+                                    }) { Text("Clear logs") }
+                                }
                             }
                             HorizontalDivider()
-                            Text("Device & audio records", style = MaterialTheme.typography.titleMedium)
-                            Text("Session connection metadata stored in Firebase (no recorded audio).",
+                            Text("Audio session history", style = MaterialTheme.typography.titleMedium)
+                            Text("View connection timestamps and clean up Firestore session records.",
                                 style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = { showAudioHistory = !showAudioHistory }) {
+                                Text(if (showAudioHistory) "Hide session history" else "View session history")
+                            }
 
                             TextButton(onClick = { showSetup = !showSetup }) {
                                 Text(if (showSetup) "Hide device linking" else "Advanced: Link my own Collector")
@@ -247,7 +257,7 @@ fun SimpleAdminScreen() {
                     }
                 }
             }
-            if (authenticated && tab == 4 && selectedDeviceId != null) {
+            if (authenticated && tab == 4 && showAudioHistory && selectedDeviceId != null) {
                 RecordsPanel(RecordKind.AUDIO_SESSIONS, selectedDeviceId) { message ->
                     status = message
                 }
