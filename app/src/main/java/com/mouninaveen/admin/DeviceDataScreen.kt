@@ -132,7 +132,7 @@ fun DeviceDataScreen(
             },
             style = MaterialTheme.typography.titleLarge
         )
-        Text("View and manage device event metadata in Firebase.", style = MaterialTheme.typography.bodySmall)
+
         if (!fixedKind) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("Lock/unlock", "Audio sessions", "Sync logs").forEach { value ->
