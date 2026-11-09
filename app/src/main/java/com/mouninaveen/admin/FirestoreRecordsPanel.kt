@@ -1,6 +1,8 @@
 package com.mouninaveen.admin
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
@@ -375,7 +377,12 @@ internal fun RecordsPanel(
             Text("No records for the chosen source and dates.", style = MaterialTheme.typography.bodyMedium)
         }
 
-        documents.forEach { item ->
+        // Virtualize records so large call histories do not inflate hundreds of cards at once.
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 540.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(documents, key = { it.id }) { item ->
             val timestamp = item.getTimestamp(dateField(kind))?.toDate()?.time ?: 0L
             val heading = when (kind) {
                 RecordKind.MY_BACKUPS, RecordKind.SHARED_CALLS ->
@@ -409,6 +416,7 @@ internal fun RecordsPanel(
                         Text(detail, style = MaterialTheme.typography.bodySmall)
                     }
                 }
+            }
             }
         }
 
