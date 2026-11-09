@@ -153,7 +153,7 @@ fun LiveMicrophoneListener(
             val subscription = db.collection("devices").document(id)
                 .collection("liveAudio")
                 .orderBy("createdAt", Query.Direction.DESCENDING)
-                .limit(8)
+                .limit(50)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         status = "Live-session query failed: ${error.localizedMessage}"
@@ -171,7 +171,13 @@ fun LiveMicrophoneListener(
                         } else {
                             availableRef = null
                             availableId = null
-                            status = "No available microphone offer. Start a session in Personal_App."
+                            val latest = snapshot?.documents?.firstOrNull()
+                            val latestState = latest?.getString("status") ?: "none"
+                            status = if (latestState == "STARTING")
+                                "Collector started a session but has not published its offer. Check Personal_App Live for a Firebase timeout/error."
+                            else if (latestState == "ANSWERED")
+                                "Last session is already connected or expired. Stop and start a new session in Personal_App to reconnect."
+                            else "No published offer for this phone (latest state: $latestState). Check the selected phone in both apps."
                         }
                     }
                 }
@@ -249,14 +255,15 @@ fun LiveMicrophoneListener(
                             val snapshot = db.collection("devices").document(id)
                                 .collection("liveAudio")
                                 .orderBy("createdAt", Query.Direction.DESCENDING)
-                                .limit(5).get().await()
+                                .limit(50).get().await()
                             val doc = snapshot.documents.firstOrNull {
                                 it.getString("status") == "OFFERED"
                             }
                             if (doc == null) {
                                 availableRef = null
                                 availableId = null
-                                status = "No available microphone offer. On Personal_App start a new owner-approved session."
+                                val latestState = snapshot.documents.firstOrNull()?.getString("status") ?: "none"
+                                status = "No published offer for this phone (latest: $latestState). Check Collector Live and selected phone."
                             } else {
                                 availableRef = doc.reference
                                 availableId = doc.id
