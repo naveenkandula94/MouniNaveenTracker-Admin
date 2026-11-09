@@ -14,6 +14,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.AggregateSource
 import com.google.firebase.firestore.CollectionReference
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
@@ -79,6 +80,24 @@ private fun filteredQuery(
     return query.orderBy(field, Query.Direction.DESCENDING)
 }
 
+/**
+ * Firestore does not cascade delete subcollections. Purge signaling candidates
+ * first, then the parent session document. Nothing here touches microphone audio.
+ */
+private suspend fun deleteAudioSession(reference: DocumentReference) {
+    val firestore = FirebaseFirestore.getInstance()
+    for (child in listOf("publisherIce", "listenerIce")) {
+        while (true) {
+            val docs = reference.collection(child).limit(200).get().await().documents
+            if (docs.isEmpty()) break
+            val batch = firestore.batch()
+            docs.forEach { batch.delete(it.reference) }
+            batch.commit().await()
+        }
+    }
+    reference.delete().await()
+}
+
 @Composable
 internal fun RecordsPanel(
     kind: RecordKind,
@@ -122,7 +141,7 @@ internal fun RecordsPanel(
         if (uid.isBlank() || (kind != RecordKind.MY_BACKUPS && deviceId == null)) null
         else collectionFor(kind, uid, deviceId)
     }
-    val query = remember(target, kind, fromMs, toMs) {
+    val query = remember(target, kind, fromMs, toMs, period, valid) {
         if (target == null || !valid) null else filteredQuery(target, kind, fromMs, toMs)
     }
     val documents = (firstPage + olderPages).distinctBy { it.id }
@@ -249,10 +268,8 @@ internal fun RecordsPanel(
                         Text("Delete selected (${selectedIds.size})")
                     }
                 }
-                if (kind != RecordKind.AUDIO_SESSIONS) {
-                    OutlinedButton(enabled = !busy, onClick = { deleteMode = "filtered" }) {
-                        Text("Delete all matching")
-                    }
+                OutlinedButton(enabled = !busy, onClick = { deleteMode = "filtered" }) {
+                    Text("Delete all matching")
                 }
             }
         }
@@ -267,6 +284,10 @@ internal fun RecordsPanel(
                         fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
                     if (kind == RecordKind.MY_BACKUPS) {
                         Text("This does not remove calls from the phone. If backup remains enabled, still-present calls may be backed up again. Disable backup on Collector first to keep deleted data removed.",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (kind == RecordKind.AUDIO_SESSIONS) {
+                        Text("Deleting an active signaling session may disconnect its current listener. Connection candidates are also permanently deleted.",
                             style = MaterialTheme.typography.bodySmall)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -286,7 +307,30 @@ internal fun RecordsPanel(
                             scope.launch {
                                 try {
                                     var deleted = 0
-                                    if (mode == "selected") {
+                                    if (kind == RecordKind.AUDIO_SESSIONS) {
+                                        if (mode == "selected") {
+                                            for (id in ids) {
+                                                check(auth.currentUser?.uid == uid) { "Account changed; deletion cancelled." }
+                                                deleteAudioSession(ref.document(id))
+                                                deleted++
+                                            }
+                                        } else {
+                                            var cursor: DocumentSnapshot? = null
+                                            while (true) {
+                                                check(auth.currentUser?.uid == uid) { "Account changed; deletion cancelled." }
+                                                val pageQuery = if (cursor == null) q.limit(100)
+                                                    else q.startAfter(cursor).limit(100)
+                                                val page = pageQuery.get().await().documents
+                                                if (page.isEmpty()) break
+                                                // Retain the cursor even after the underlying documents are deleted.
+                                                cursor = page.last()
+                                                for (doc in page) {
+                                                    deleteAudioSession(doc.reference)
+                                                    deleted++
+                                                }
+                                            }
+                                        }
+                                    } else if (mode == "selected") {
                                         ids.chunked(200).forEach { page ->
                                             check(auth.currentUser?.uid == uid) { "Account changed; deletion cancelled." }
                                             val batch = FirebaseFirestore.getInstance().batch()
@@ -354,14 +398,12 @@ internal fun RecordsPanel(
             }
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (kind != RecordKind.AUDIO_SESSIONS) {
-                        Checkbox(
-                            checked = item.id in selectedIds,
-                            onCheckedChange = { checked ->
-                                selectedIds = if (checked) selectedIds + item.id else selectedIds - item.id
-                            }
-                        )
-                    }
+                    Checkbox(
+                        checked = item.id in selectedIds,
+                        onCheckedChange = { checked ->
+                            selectedIds = if (checked) selectedIds + item.id else selectedIds - item.id
+                        }
+                    )
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(heading, fontWeight = FontWeight.SemiBold)
                         Text(detail, style = MaterialTheme.typography.bodySmall)
