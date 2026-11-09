@@ -43,8 +43,11 @@ fun LiveMicrophoneListener(devices: List<Pair<String, String>>) {
     var listening by remember { mutableStateOf<ListeningSession?>(null) }
     var busy by remember { mutableStateOf(false) }
 
+    // Dispose only the session owned by this effect instance. Reading mutable
+    // listening state in onDispose closed a newly connected WebRTC peer.
     DisposableEffect(listening) {
-        onDispose { listening?.stop() }
+        val currentSession = listening
+        onDispose { currentSession?.stop() }
     }
 
     ElevatedCard(Modifier.fillMaxWidth()) {
