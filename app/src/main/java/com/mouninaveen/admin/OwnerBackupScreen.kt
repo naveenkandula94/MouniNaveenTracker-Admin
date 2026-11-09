@@ -137,7 +137,7 @@ fun OwnerBackupScreen(deviceId: String?, deviceName: String, legacy: Boolean = f
             style = MaterialTheme.typography.bodySmall
         )
         Text(
-            "Privacy: Firebase permits private records to be viewed only when this app is signed in with the same owner UID. Another Admin account cannot access a different owner's private call history.",
+            "Source: Firebase cloud records uploaded by Personal_App. This screen only views and manages those records.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
