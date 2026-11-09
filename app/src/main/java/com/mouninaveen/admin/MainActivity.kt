@@ -370,7 +370,7 @@ private fun AdminScreen() {
                 }
 
                 ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp) {
-                    listOf("Overview", "Devices", "Lock timeline", "Calls", "Live audio", "Settings").forEachIndexed { index, name ->
+                    listOf("Overview", "Devices", "Lock timeline", "Calls", "Live audio", "Settings", "Diagnostics").forEachIndexed { index, name ->
                         Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(name) })
                     }
                 }
@@ -756,6 +756,26 @@ private fun AdminScreen() {
                 }
                 if (selectedTab == 4) {
                     LiveMicrophoneListener(devices.map { it.id to it.name })
+                }
+                if (selectedTab == 6) {
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Connection diagnostics", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text("Authentication: ${if (auth.currentUser != null) "Signed in" else "Signed out"}")
+                            Text("Account UID: ${auth.currentUser?.uid.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+                            Text("Enrolled devices: ${devices.size}")
+                            Text("Latest result: $status")
+                            Button(enabled = !busy, onClick = {
+                                runTask {
+                                    verifyAdmin()
+                                    loadDevices()
+                                    status = "Admin authorization and device list query both succeeded."
+                                }
+                            }) { Text("Test Firebase permissions") }
+                            Text("If PERMISSION_DENIED persists: check Firestore admins/{UID} role=admin and publish the latest firebase/firestore.rules from the feature branch.", style = MaterialTheme.typography.bodySmall)
+                            Text("Audio connection failures: verify Collector started sharing and keep both phones open. STUN-only connections may require a TURN relay.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
                 if (selectedTab == 5) {
                     ElevatedCard {
