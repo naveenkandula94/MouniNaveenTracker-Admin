@@ -138,7 +138,7 @@ fun SimpleAdminScreen() {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
                     Text("ADMIN", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     Text("My devices", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(if (authenticated) "Signed in • ${devices.size} linked device(s)" else "Secure sign in", style = MaterialTheme.typography.bodySmall)
+                    Text(if (authenticated) "Viewer only • ${devices.size} linked phone(s)" else "Secure sign in", style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
@@ -241,12 +241,13 @@ fun SimpleAdminScreen() {
 
                 }
                 if (tab == 1) {
-                    Text("Call history", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Personal_App call history", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Admin_App displays Firebase records collected by Personal_App. It does not read call logs or back up data from the Admin phone.", style = MaterialTheme.typography.bodySmall)
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = callsSource == "private",
                             onClick = { callsSource = "private" },
-                            label = { Text("My automatic backup") }
+                            label = { Text("Personal_App backups") }
                         )
                         FilterChip(
                             selected = callsSource == "shared",
@@ -256,18 +257,28 @@ fun SimpleAdminScreen() {
                         FilterChip(
                             selected = callsSource == "legacy",
                             onClick = { callsSource = "legacy" },
-                            label = { Text("Legacy records") }
+                            label = { Text("Earlier records") }
                         )
                     }
                     if (callsSource == "private" || callsSource == "legacy") {
-                        val chosen = devices.firstOrNull { it.id == selectedDeviceId }
-                        key(selectedDeviceId, callsSource) {
-                            OwnerBackupScreen(
-                                deviceId = selectedDeviceId,
-                                deviceName = chosen?.name ?: "Selected phone",
-                                legacy = callsSource == "legacy",
-                                onStatus = { status = it }
+                        if (callsSource == "private" && selectedDeviceId == null) {
+                            Text(
+                                "No phone is linked to this Admin account. New backups are separated by phone. Add a phone in Settings; if your previous Personal_App already uploaded records, tap Earlier records to view those older uploads.",
+                                style = MaterialTheme.typography.bodyMedium
                             )
+                            OutlinedButton(onClick = { callsSource = "legacy" }) {
+                                Text("View earlier uploaded records")
+                            }
+                        } else {
+                            val chosen = devices.firstOrNull { it.id == selectedDeviceId }
+                            key(selectedDeviceId, callsSource) {
+                                OwnerBackupScreen(
+                                    deviceId = selectedDeviceId,
+                                    deviceName = chosen?.name ?: "Earlier uploads",
+                                    legacy = callsSource == "legacy",
+                                    onStatus = { status = it }
+                                )
+                            }
                         }
                     } else {
                     Text("Only records separately shared with the enrolled Admin are listed here.", style = MaterialTheme.typography.bodySmall)
