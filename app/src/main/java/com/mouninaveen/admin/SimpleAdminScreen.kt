@@ -467,7 +467,14 @@ fun SimpleAdminScreen() {
                     }
                 }
                 if (tab == 2) {
-                    MessagesScreen()
+                    val phone = devices.firstOrNull { it.id == selectedDeviceId }
+                    key(selectedDeviceId) {
+                        MessagesScreen(
+                            deviceId = selectedDeviceId,
+                            deviceName = phone?.name ?: "No linked phone",
+                            onStatus = { status = it }
+                        )
+                    }
                 }
                 if (tab == 3) {
                     Text("Lock / unlock", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
