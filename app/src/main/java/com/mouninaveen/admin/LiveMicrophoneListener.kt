@@ -22,7 +22,9 @@ private class ListeningSession(
     val peer: LiveAudioPeer,
     val subscriptions: List<ListenerRegistration>
 ) {
+    private val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
     fun stop() {
+        if (!stopped.compareAndSet(false, true)) return
         subscriptions.forEach { it.remove() }
         peer.close()
     }
