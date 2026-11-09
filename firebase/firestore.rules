@@ -17,7 +17,7 @@ service cloud.firestore {
    allow delete: if isOwner(deviceId);
    match /usageEvents/{eventId} {
     allow create: if isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.keys().hasOnly(['eventId','deviceId','eventType','packageName','applicationLabel','eventTimestamp','serverTimestamp','timezone','schemaVersion']) && request.resource.data.eventId == eventId && request.resource.data.deviceId == deviceId && request.resource.data.eventType in ['SCREEN_LOCKED','SCREEN_UNLOCKED'] && request.resource.data.packageName is string && request.resource.data.eventTimestamp is timestamp;
-    allow read: if isOwner(deviceId); allow update, delete: if false;
+    allow read, delete: if isOwner(deviceId); allow update: if false;
    }
    match /callLogs/{callId} {
     // Explicitly imported by the signed-in collector, never unrestricted writes.
@@ -70,20 +70,23 @@ service cloud.firestore {
        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answer','status'])
        && resource.data.status == 'OFFERED'
        && request.resource.data.status == 'ANSWERED');
-    allow delete: if false;
+    // Only ended owner-controlled sessions can be removed; never interrupt live audio.
+    allow delete: if isOwner(deviceId) && resource.data.status == 'ENDED';
     match /publisherIce/{candidateId} {
      allow read: if isOwner(deviceId) || isCollector(deviceId);
      allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
        && request.resource.data.keys().hasOnly(['sdp','mid','line'])
        && request.resource.data.sdp is string && request.resource.data.mid is string && request.resource.data.line is int;
-     allow update, delete: if false;
+     allow update: if false;
+     allow delete: if isOwner(deviceId);
     }
     match /listenerIce/{candidateId} {
      allow read: if isOwner(deviceId) || isCollector(deviceId);
      allow create: if isOwner(deviceId)
        && request.resource.data.keys().hasOnly(['sdp','mid','line'])
        && request.resource.data.sdp is string && request.resource.data.mid is string && request.resource.data.line is int;
-     allow update, delete: if false;
+     allow update: if false;
+     allow delete: if isOwner(deviceId);
     }
    }
   }
