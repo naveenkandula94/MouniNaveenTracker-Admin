@@ -88,7 +88,13 @@ fun DeviceDataScreen(
                         else d.getString("eventType") ?: "SYNC",
                         d.getTimestamp(timeField)?.toDate()?.time ?: 0L,
                         when (kind) {
-                            "Lock/unlock" -> d.getString("applicationLabel") ?: "Screen state"
+                            "Lock/unlock" -> when (d.getString("eventType")) {
+                                "SCREEN_OFF" -> "Screen turned off (not necessarily securely locked)"
+                                "SCREEN_ON" -> "Screen turned on"
+                                "SCREEN_LOCKED" -> "Keyguard locked"
+                                "SCREEN_UNLOCKED" -> "Phone unlocked"
+                                else -> "Android screen state"
+                            }
                             "Audio sessions" -> "Microphone connection metadata only (no recording)"
                             else -> "${d.getString("status") ?: "UNKNOWN"} · ${d.getLong("count") ?: 0L} new calls in backup"
                         }
@@ -127,7 +133,7 @@ fun DeviceDataScreen(
         Text(
             when (kind) {
                 "Sync logs" -> "Sync activity · newest first"
-                "Lock/unlock" -> "Screen lock history · newest first"
+                "Lock/unlock" -> "Screen activity · newest first"
                 else -> "Audio sessions · newest first"
             },
             style = MaterialTheme.typography.titleLarge
