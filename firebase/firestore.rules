@@ -17,7 +17,7 @@ service cloud.firestore {
    allow delete: if isOwner(deviceId);
    match /usageEvents/{eventId} {
     allow create: if isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.keys().hasOnly(['eventId','deviceId','eventType','packageName','applicationLabel','eventTimestamp','serverTimestamp','timezone','schemaVersion']) && request.resource.data.eventId == eventId && request.resource.data.deviceId == deviceId && request.resource.data.eventType in ['SCREEN_LOCKED','SCREEN_UNLOCKED'] && request.resource.data.packageName is string && request.resource.data.eventTimestamp is timestamp;
-    allow read: if isOwner(deviceId); allow update, delete: if false;
+    allow read, delete: if isOwner(deviceId); allow update: if false;
    }
    match /callLogs/{callId} {
     // Explicitly imported by the signed-in collector, never unrestricted writes.
