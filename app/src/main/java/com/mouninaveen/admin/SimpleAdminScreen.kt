@@ -25,7 +25,10 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 
-private data class SimpleDevice(val id: String, val name: String, val collectorUid: String, val enabled: Boolean)
+private data class SimpleDevice(
+    val id: String, val name: String, val collectorUid: String, val enabled: Boolean,
+    val lastSyncMillis: Long, val lastSyncStatus: String
+)
 private data class SimpleCall(val id: String, val number: String, val direction: String, val dateMillis: Long, val duration: Int)
 
 @Composable
@@ -44,6 +47,8 @@ fun SimpleAdminScreen() {
     var selectedDeviceId by remember { mutableStateOf<String?>(null) }
     var tab by remember { mutableIntStateOf(0) }
     var showSetup by remember { mutableStateOf(false) }
+    var newPhoneName by remember { mutableStateOf("") }
+    var newCollectorUid by remember { mutableStateOf("") }
     var diagnosticText by remember { mutableStateOf("Not checked") }
     var selectedCallIds by remember { mutableStateOf(emptySet<String>()) }
     var deleteMode by remember { mutableStateOf("") }
@@ -63,9 +68,11 @@ fun SimpleAdminScreen() {
                 doc.id,
                 doc.getString("displayName") ?: "My device",
                 doc.getString("collectorUid") ?: "",
-                doc.getBoolean("enabled") != false
+                doc.getBoolean("enabled") != false,
+                doc.getTimestamp("lastSyncAt")?.toDate()?.time ?: 0L,
+                doc.getString("lastSyncStatus") ?: "Not synced yet"
             )
-        }
+        }.sortedWith(compareByDescending<SimpleDevice> { it.lastSyncMillis }.thenBy { it.name })
         if (selectedDeviceId == null || devices.none { it.id == selectedDeviceId }) {
             selectedDeviceId = devices.firstOrNull()?.id
         }
@@ -175,13 +182,41 @@ fun SimpleAdminScreen() {
                     }
                 }
             } else {
+                if (devices.isNotEmpty()) {
+                    val chosen = devices.firstOrNull { it.id == selectedDeviceId }
+                    Text("Selected phone", style = MaterialTheme.typography.labelMedium)
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        devices.forEach { phone ->
+                            FilterChip(
+                                selected = selectedDeviceId == phone.id,
+                                onClick = {
+                                    selectedDeviceId = phone.id
+                                    selectedCallIds = emptySet()
+                                    deleteMode = ""
+                                },
+                                label = { Text(phone.name) }
+                            )
+                        }
+                    }
+                    if (chosen != null) {
+                        Text(
+                            "${chosen.name} • ${if (chosen.enabled) "Enabled" else "Disabled"} • " +
+                                "${if (chosen.lastSyncMillis == 0L) "No lock-event sync yet" else "Last lock sync " +
+                                SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(chosen.lastSyncMillis))}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
                 if (tab == 0) {
                     Text("Overview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("${devices.size} linked device(s)", style = MaterialTheme.typography.headlineSmall)
-                            Text(if (devices.isEmpty()) "No linked device yet. Go to Settings to link your own Collector account."
-                                else "View owner-approved call records or join a live audio session started on Collector.")
+                            Text(if (devices.isEmpty()) "Add your phones under Settings, then choose the phone in the selector."
+                                else "Choose a phone above to view its call history, lock events, session metadata and backup status.")
                             Button(enabled = !loading, onClick = { run { verifyAndLoad() } }) { Text("Refresh status") }
                         }
                     }
@@ -190,6 +225,7 @@ fun SimpleAdminScreen() {
                             Column(Modifier.padding(14.dp)) {
                                 Text(device.name, style = MaterialTheme.typography.titleMedium)
                                 Text(if (device.enabled) "Enrollment enabled" else "Enrollment disabled", style = MaterialTheme.typography.bodySmall)
+                                Text("Last sync: ${device.lastSyncStatus}", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
@@ -206,7 +242,7 @@ fun SimpleAdminScreen() {
                 }
                 if (tab == 1) {
                     Text("Call history", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = callsSource == "private",
                             onClick = { callsSource = "private" },
@@ -217,22 +253,25 @@ fun SimpleAdminScreen() {
                             onClick = { callsSource = "shared" },
                             label = { Text("Shared records") }
                         )
+                        FilterChip(
+                            selected = callsSource == "legacy",
+                            onClick = { callsSource = "legacy" },
+                            label = { Text("Legacy records") }
+                        )
                     }
-                    if (callsSource == "private") {
-                        OwnerBackupScreen(onStatus = { status = it })
+                    if (callsSource == "private" || callsSource == "legacy") {
+                        val chosen = devices.firstOrNull { it.id == selectedDeviceId }
+                        key(selectedDeviceId, callsSource) {
+                            OwnerBackupScreen(
+                                deviceId = selectedDeviceId,
+                                deviceName = chosen?.name ?: "Selected phone",
+                                legacy = callsSource == "legacy",
+                                onStatus = { status = it }
+                            )
+                        }
                     } else {
                     Text("Only records separately shared with the enrolled Admin are listed here.", style = MaterialTheme.typography.bodySmall)
-                    if (devices.size > 1) {
-                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            devices.forEach { d ->
-                                FilterChip(
-                                    selected = selectedDeviceId == d.id,
-                                    onClick = { selectedDeviceId = d.id },
-                                    label = { Text(d.name, maxLines = 1) }
-                                )
-                            }
-                        }
-                    }
+
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("${calls.size} shared calls", modifier = Modifier.weight(1f))
                         OutlinedButton(enabled = selectedDeviceId != null, onClick = {
@@ -388,25 +427,41 @@ fun SimpleAdminScreen() {
                             }) { Text("Test Firebase connection") }
                             Text(diagnosticText, style = MaterialTheme.typography.bodySmall)
                             TextButton(onClick = { showSetup = !showSetup }) {
-                                Text(if (showSetup) "Hide device linking" else "Advanced: Link my own Collector")
+                                Text(if (showSetup) "Hide device linking" else "Add or manage phones")
                             }
                             if (showSetup) {
-                                Text("This uses the SAME Firebase UID for Admin and Collector. Only use on your own device/account.")
-                                Button(enabled = !loading && auth.currentUser != null, onClick = {
-                                    run {
-                                        val uid = auth.currentUser?.uid ?: error("Sign in first.")
-                                        val matches = db.collection("devices").whereEqualTo("collectorUid", uid).get().await()
-                                        if (matches.isEmpty) {
+                                Text("Add a new phone. Install Personal_App there, sign in, then choose this named enrollment in Account.")
+                                OutlinedTextField(
+                                    value = newPhoneName, onValueChange = { newPhoneName = it.take(45) },
+                                    label = { Text("Phone name (for example Samsung S24)") },
+                                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                                )
+                                OutlinedTextField(
+                                    value = newCollectorUid, onValueChange = { newCollectorUid = it.take(128) },
+                                    label = { Text("Personal_App UID (blank = same account)") },
+                                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                                )
+                                Button(
+                                    enabled = !loading && newPhoneName.isNotBlank(),
+                                    onClick = {
+                                        run {
+                                            val uid = auth.currentUser?.uid ?: error("Sign in first.")
+                                            val collector = newCollectorUid.trim().ifBlank { uid }
                                             db.collection("devices").document(UUID.randomUUID().toString()).set(
-                                                mapOf("adminUid" to uid, "collectorUid" to uid,
-                                                    "displayName" to "My Android phone",
-                                                    "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp())
+                                                mapOf(
+                                                    "adminUid" to uid, "collectorUid" to collector,
+                                                    "displayName" to newPhoneName.trim(),
+                                                    "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+                                                )
                                             ).await()
+                                            verifyAndLoad()
+                                            newPhoneName = ""
+                                            status = "New phone created. Open Personal_App > Account to select it."
                                         }
-                                        verifyAndLoad()
-                                        status = "Your Collector account is linked."
                                     }
-                                }) { Text("Link same-account Collector") }
+                                ) { Text("Add phone") }
+                                Text("For different Firebase UIDs, Admin sees enrolled events and separately shared calls; private phone backup remains restricted to its owner UID.",
+                                    style = MaterialTheme.typography.bodySmall)
                             }
                             OutlinedButton(onClick = {
                                 auth.signOut()
@@ -426,7 +481,10 @@ fun SimpleAdminScreen() {
                         .then(if (tab == 2) Modifier else Modifier.height(0.dp))
                         .clipToBounds()
                 ) {
-                    LiveMicrophoneListener(devices.map { it.id to it.name }, onStatus = { message ->
+                    LiveMicrophoneListener(
+                        devices.map { it.id to it.name },
+                        preferredDeviceId = selectedDeviceId,
+                        onStatus = { message ->
                         AdminDiagnostics.record(context, "AUDIO", message)
                         diagnosticsVersion++
                     })
