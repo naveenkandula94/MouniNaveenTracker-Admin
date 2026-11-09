@@ -1,6 +1,8 @@
 package com.mouninaveen.admin
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -127,7 +129,7 @@ fun OwnerBackupScreen(onStatus: (String) -> Unit) {
             "An Admin signed into a different UID cannot access these records.",
             style = MaterialTheme.typography.bodySmall
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("All","Today","7 days","30 days","Custom").forEach { option ->
                 FilterChip(
                     selected = range == option,
