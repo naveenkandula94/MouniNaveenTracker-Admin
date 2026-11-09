@@ -137,7 +137,7 @@ fun SimpleAdminScreen() {
             Surface(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars), tonalElevation = 2.dp) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
                     Text("ADMIN", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                    Text("Device dashboard", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("My devices", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(if (authenticated) "Signed in • ${devices.size} linked device(s)" else "Secure sign in", style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -396,8 +396,17 @@ fun SimpleAdminScreen() {
                     Text("Collector user must explicitly start the session. Admin cannot remotely activate a microphone.", style = MaterialTheme.typography.bodySmall)
                 }
                 if (tab == 3) {
-                    Text("Diagnostic logs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Local connection and permission events. Call numbers and audio are not logged.",
+                    if (selectedDeviceId != null) {
+                        key(selectedDeviceId) {
+                            DeviceDataScreen(
+                                deviceId = selectedDeviceId!!,
+                                initialKind = "Sync logs",
+                                onStatus = { status = it }
+                            )
+                        }
+                    }
+                    Text("Admin app logs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Local connection and permission diagnostics for Admin_App. Remote sync logs above belong to the selected phone.",
                         style = MaterialTheme.typography.bodySmall)
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
