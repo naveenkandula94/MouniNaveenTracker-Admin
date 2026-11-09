@@ -65,63 +65,63 @@ fun LiveMicrophoneListener(
         if (!automatic) reconnectUntil = System.currentTimeMillis() + 120_000L
         busy = true
 
-                    scope.launch {
-                        var newPeer: LiveAudioPeer? = null
-                        try {
-                            val snapshot = ref.get().await()
-                            check(snapshot.getString("status") == "OFFERED") { "The microphone session is not available." }
-                            val offer = snapshot.getString("offer") ?: error("The offer has not arrived.")
-                            val peer = LiveAudioPeer(
-                                context, false,
-                                onIce = { candidate ->
-                                    ref.collection("listenerIce").add(mapOf(
-                                        "sdp" to candidate.sdp,
-                                        "mid" to (candidate.sdpMid ?: ""),
-                                        "line" to candidate.sdpMLineIndex
-                                    )).addOnFailureListener { error ->
-                                        (context as android.app.Activity).runOnUiThread {
-                                            status = "ICE upload failed: ${error.localizedMessage}"
-                                        }
-                                    }
-                                },
-                                onStatus = { message ->
-                                    (context as android.app.Activity).runOnUiThread { status = "Audio: $message" }
-                                }
-                            )
-                            newPeer = peer
-                            val ice = ref.collection("publisherIce").addSnapshotListener { events, _ ->
-                                events?.documentChanges?.forEach { change ->
-                                    if (change.type == DocumentChange.Type.ADDED) {
-                                        val d = change.document
-                                        val sdp = d.getString("sdp") ?: return@forEach
-                                        peer.addRemoteCandidate(IceCandidate(d.getString("mid") ?: "", d.getLong("line")?.toInt() ?: 0, sdp))
-                                    }
-                                }
+        scope.launch {
+            var newPeer: LiveAudioPeer? = null
+            try {
+                val snapshot = ref.get().await()
+                check(snapshot.getString("status") == "OFFERED") { "The microphone session is not available." }
+                val offer = snapshot.getString("offer") ?: error("The offer has not arrived.")
+                val peer = LiveAudioPeer(
+                    context, false,
+                    onIce = { candidate ->
+                        ref.collection("listenerIce").add(mapOf(
+                            "sdp" to candidate.sdp,
+                            "mid" to (candidate.sdpMid ?: ""),
+                            "line" to candidate.sdpMLineIndex
+                        )).addOnFailureListener { error ->
+                            (context as android.app.Activity).runOnUiThread {
+                                status = "ICE upload failed: ${error.localizedMessage}"
                             }
-                            val sessionMonitor = ref.addSnapshotListener { doc, _ ->
-                                if (doc?.getString("status") == "ENDED" && joinedSessionId == ref.id) {
-                                    listening?.stop()
-                                    listening = null
-                                    joinedSessionId = null
-                                    status = "Stream interrupted; checking for a new owner-approved session."
-                                }
-                            }
-                            listening = ListeningSession(peer, listOf(ice, sessionMonitor))
-                            joinedSessionId = ref.id
-                            peer.receiveOffer(offer) { answer ->
-                                ref.update("answer", answer, "status", "ANSWERED").addOnFailureListener { error ->
-                                    (context as android.app.Activity).runOnUiThread { status = "Could not publish WebRTC answer: ${error.localizedMessage}" }
-                                }
-                            }
-                            status = "Connecting to Collector live microphone…"
-                        } catch (e: Exception) {
-                            newPeer?.close()
-                            listening?.stop()
-                            listening = null
-                            joinedSessionId = null
-                            status = "Listening failed: ${e.localizedMessage}"
-                        } finally { busy = false }
+                        }
+                    },
+                    onStatus = { message ->
+                        (context as android.app.Activity).runOnUiThread { status = "Audio: $message" }
                     }
+                )
+                newPeer = peer
+                val ice = ref.collection("publisherIce").addSnapshotListener { events, _ ->
+                    events?.documentChanges?.forEach { change ->
+                        if (change.type == DocumentChange.Type.ADDED) {
+                            val d = change.document
+                            val sdp = d.getString("sdp") ?: return@forEach
+                            peer.addRemoteCandidate(IceCandidate(d.getString("mid") ?: "", d.getLong("line")?.toInt() ?: 0, sdp))
+                        }
+                    }
+                }
+                val sessionMonitor = ref.addSnapshotListener { doc, _ ->
+                    if (doc?.getString("status") == "ENDED" && joinedSessionId == ref.id) {
+                        listening?.stop()
+                        listening = null
+                        joinedSessionId = null
+                        status = "Stream interrupted; checking for a new owner-approved session."
+                    }
+                }
+                listening = ListeningSession(peer, listOf(ice, sessionMonitor))
+                joinedSessionId = ref.id
+                peer.receiveOffer(offer) { answer ->
+                    ref.update("answer", answer, "status", "ANSWERED").addOnFailureListener { error ->
+                        (context as android.app.Activity).runOnUiThread { status = "Could not publish WebRTC answer: ${error.localizedMessage}" }
+                    }
+                }
+                status = "Connecting to Collector live microphone…"
+            } catch (e: Exception) {
+                newPeer?.close()
+                listening?.stop()
+                listening = null
+                joinedSessionId = null
+                status = "Listening failed: ${e.localizedMessage}"
+            } finally { busy = false }
+        }
 
     }
 
