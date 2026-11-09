@@ -10,6 +10,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -31,6 +33,7 @@ fun SimpleAdminScreen() {
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var authenticated by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf(auth.currentUser?.email.orEmpty()) }
     var password by remember { mutableStateOf("") }
@@ -42,6 +45,9 @@ fun SimpleAdminScreen() {
     var tab by remember { mutableIntStateOf(0) }
     var showSetup by remember { mutableStateOf(false) }
     var diagnosticText by remember { mutableStateOf("Not checked") }
+    var selectedCallIds by remember { mutableStateOf(emptySet<String>()) }
+    var deleteMode by remember { mutableStateOf("") }
+    var diagnosticsVersion by remember { mutableIntStateOf(0) }
 
     suspend fun verifyAndLoad() {
         val uid = auth.currentUser?.uid ?: error("Sign in first.")
@@ -76,6 +82,13 @@ fun SimpleAdminScreen() {
         }
     }
 
+    LaunchedEffect(status) {
+        if (status.isNotBlank()) {
+            AdminDiagnostics.record(context, "ADMIN", status)
+            diagnosticsVersion++
+        }
+    }
+
     LaunchedEffect(auth.currentUser?.uid) {
         if (auth.currentUser != null && !authenticated) {
             try { verifyAndLoad() }
@@ -87,6 +100,8 @@ fun SimpleAdminScreen() {
 
     LaunchedEffect(authenticated, selectedDeviceId, tab) {
         if (authenticated && tab == 1 && selectedDeviceId != null) {
+            selectedCallIds = emptySet()
+            deleteMode = ""
             try {
                 val docs = db.collection("devices").document(selectedDeviceId!!)
                     .collection("callLogs")
@@ -110,7 +125,7 @@ fun SimpleAdminScreen() {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
-            Surface(tonalElevation = 2.dp) {
+            Surface(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars), tonalElevation = 2.dp) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
                     Text("ADMIN", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     Text("Device dashboard", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -121,11 +136,11 @@ fun SimpleAdminScreen() {
         bottomBar = {
             if (authenticated) {
                 NavigationBar {
-                    listOf("Home", "Calls", "Live", "Settings").forEachIndexed { i, label ->
+                    listOf("Home", "Calls", "Live", "Logs", "Settings").forEachIndexed { i, label ->
                         NavigationBarItem(
                             selected = tab == i,
                             onClick = { tab = i },
-                            icon = { Text(listOf("⌂", "☎", "◉", "⚙")[i]) },
+                            icon = { Text(listOf("⌂", "☎", "◉", "≡", "⚙")[i]) },
                             label = { Text(label) }
                         )
                     }
@@ -208,12 +223,103 @@ fun SimpleAdminScreen() {
                             }
                         }) { Text("Refresh") }
                     }
-                    if (calls.isEmpty()) Text("No owner-approved call records for this device.")
-                    calls.forEach { call ->
-                        ElevatedCard(Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("${call.direction} • ${call.number}", fontWeight = FontWeight.SemiBold)
-                                Text("${if (call.dateMillis > 0) SimpleDateFormat("dd MMM yyyy HH:mm", Locale.getDefault()).format(Date(call.dateMillis)) else "Unknown date"} • ${call.duration}s")
+                    if (calls.isEmpty()) {
+                        Text("No shared call records stored for this device.")
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                selectedCallIds = if (selectedCallIds.size == calls.size) emptySet()
+                                    else calls.map { it.id }.toSet()
+                            }) {
+                                Text(if (selectedCallIds.size == calls.size) "Clear selection" else "Select all shown")
+                            }
+                            OutlinedButton(onClick = { deleteMode = "all" }) { Text("Delete all") }
+                        }
+                        if (selectedCallIds.isNotEmpty()) {
+                            Button(
+                                enabled = !loading,
+                                onClick = { deleteMode = "selected" },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) { Text("Delete selected (${selectedCallIds.size})") }
+                        }
+                        if (deleteMode.isNotBlank()) {
+                            ElevatedCard(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        if (deleteMode == "all")
+                                            "Permanently delete ALL Admin-shared call records for this device?"
+                                        else "Permanently delete ${selectedCallIds.size} selected records?",
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    Text("This does not remove the Collector owner's private backup.",
+                                        style = MaterialTheme.typography.bodySmall)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(onClick = { deleteMode = "" }) { Text("Cancel") }
+                                        Button(
+                                            enabled = !loading,
+                                            onClick = {
+                                                val mode = deleteMode
+                                                val deviceId = selectedDeviceId ?: return@Button
+                                                val chosen = selectedCallIds.toList()
+                                                deleteMode = ""
+                                                run {
+                                                    // Verify that this device still belongs to the signed-in Admin.
+                                                    val ownerUid = auth.currentUser?.uid ?: error("Sign in first.")
+                                                    val device = db.collection("devices").document(deviceId).get().await()
+                                                    check(device.getString("adminUid") == ownerUid) { "Device is not yours." }
+                                                    val collection = device.reference.collection("callLogs")
+                                                    var deleted = 0
+                                                    if (mode == "all") {
+                                                        while (true) {
+                                                            val page = collection.limit(200).get().await().documents
+                                                            if (page.isEmpty()) break
+                                                            val batch = db.batch()
+                                                            page.forEach { batch.delete(it.reference) }
+                                                            batch.commit().await()
+                                                            deleted += page.size
+                                                        }
+                                                    } else {
+                                                        if (chosen.isNotEmpty()) {
+                                                            val batch = db.batch()
+                                                            chosen.forEach { batch.delete(collection.document(it)) }
+                                                            batch.commit().await()
+                                                            deleted = chosen.size
+                                                        }
+                                                    }
+                                                    calls = collection.orderBy("callTimestamp", Query.Direction.DESCENDING)
+                                                        .limit(100).get().await().documents.map { doc ->
+                                                            SimpleCall(
+                                                                doc.id, doc.getString("number") ?: "Unknown",
+                                                                doc.getString("direction") ?: "UNKNOWN",
+                                                                doc.getTimestamp("callTimestamp")?.toDate()?.time ?: 0L,
+                                                                doc.getLong("durationSeconds")?.toInt() ?: 0
+                                                            )
+                                                        }
+                                                    selectedCallIds = emptySet()
+                                                    status = "Deleted $deleted Admin-shared call records."
+                                                }
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                        ) { Text("Confirm delete") }
+                                    }
+                                }
+                            }
+                        }
+                        calls.forEach { call ->
+                            ElevatedCard(Modifier.fillMaxWidth()) {
+                                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(
+                                        checked = call.id in selectedCallIds,
+                                        onCheckedChange = { checked ->
+                                            selectedCallIds = if (checked) selectedCallIds + call.id
+                                                else selectedCallIds - call.id
+                                        }
+                                    )
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("${call.direction} • ${call.number}", fontWeight = FontWeight.SemiBold)
+                                        Text("${if (call.dateMillis > 0) SimpleDateFormat("dd MMM yyyy HH:mm", Locale.getDefault()).format(Date(call.dateMillis)) else "Unknown date"} • ${call.duration}s")
+                                    }
+                                }
                             }
                         }
                     }
@@ -223,6 +329,25 @@ fun SimpleAdminScreen() {
                     Text("Collector user must explicitly start the session. Admin cannot remotely activate a microphone.", style = MaterialTheme.typography.bodySmall)
                 }
                 if (tab == 3) {
+                    Text("Diagnostic logs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Local connection and permission events. Call numbers and audio are not logged.",
+                        style = MaterialTheme.typography.bodySmall)
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            key(diagnosticsVersion) {
+                                Text(AdminDiagnostics.read(context), style = MaterialTheme.typography.bodySmall)
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { diagnosticsVersion++ }) { Text("Refresh") }
+                                OutlinedButton(onClick = {
+                                    AdminDiagnostics.clear(context)
+                                    diagnosticsVersion++
+                                }) { Text("Clear logs") }
+                            }
+                        }
+                    }
+                }
+                if (tab == 4) {
                     Text("Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -273,10 +398,15 @@ fun SimpleAdminScreen() {
                         .then(if (tab == 2) Modifier else Modifier.height(0.dp))
                         .clipToBounds()
                 ) {
-                    LiveMicrophoneListener(devices.map { it.id to it.name })
+                    LiveMicrophoneListener(devices.map { it.id to it.name }, onStatus = { message ->
+                        AdminDiagnostics.record(context, "AUDIO", message)
+                        diagnosticsVersion++
+                    })
                 }
             }
-            Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            if (tab == 3 || tab == 4 || status.startsWith("Error") || status.startsWith("Account setup")) {
+                Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
         }
     }
 }
