@@ -15,6 +15,8 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.tasks.await
 import org.webrtc.IceCandidate
 
@@ -46,6 +48,7 @@ fun LiveMicrophoneListener(
     var status by remember { mutableStateOf("Choose a device and search for a live microphone session.") }
     var listening by remember { mutableStateOf<ListeningSession?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var audioLevel by remember { mutableFloatStateOf(0f) }
 
     // Dispose only the session owned by this effect instance. Reading mutable
     // listening state in onDispose closed a newly connected WebRTC peer.
@@ -101,6 +104,18 @@ fun LiveMicrophoneListener(
     DisposableEffect(listening) {
         val currentSession = listening
         onDispose { currentSession?.stop() }
+    }
+
+    LaunchedEffect(listening) {
+        val activeSession = listening
+        audioLevel = 0f
+        while (activeSession != null && isActive) {
+            activeSession.peer.sampleAudioLevel { sample ->
+                (context as android.app.Activity).runOnUiThread { audioLevel = sample }
+            }
+            delay(250L)
+        }
+        audioLevel = 0f
     }
 
     ElevatedCard(Modifier.fillMaxWidth()) {
@@ -207,6 +222,17 @@ fun LiveMicrophoneListener(
                     status = "Disconnected from audio."
                 }) { Text("Disconnect") }
             }
+
+            AudioLevelMeter(
+                label = "Incoming sound • live volume",
+                level = audioLevel,
+                active = listening != null
+            )
+            Text(
+                "A moving bar shows received WebRTC audio activity. If connected but flat, " +
+                    "check the Personal_App input meter, microphone permission and speaker volume.",
+                style = MaterialTheme.typography.bodySmall
+            )
             Text(status)
             Text("Keep both apps open. If connectivity fails on mobile data, a TURN relay may be required.", style = MaterialTheme.typography.bodySmall)
         }
