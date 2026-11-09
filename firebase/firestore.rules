@@ -17,7 +17,13 @@ service cloud.firestore {
    allow delete: if isOwner(deviceId);
    match /usageEvents/{eventId} {
     allow create: if isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.keys().hasOnly(['eventId','deviceId','eventType','packageName','applicationLabel','eventTimestamp','serverTimestamp','timezone','schemaVersion']) && request.resource.data.eventId == eventId && request.resource.data.deviceId == deviceId && request.resource.data.eventType in ['SCREEN_LOCKED','SCREEN_UNLOCKED'] && request.resource.data.packageName is string && request.resource.data.eventTimestamp is timestamp;
-    allow read, delete: if isOwner(deviceId); allow update: if false;
+    allow read: if isOwner(deviceId);
+    allow delete: if isOwner(deviceId);
+    // Idempotent overlap rechecks are permitted to refresh the server timestamp,
+    // but cannot change an event type, device, time or other recorded data.
+    allow update: if isCollector(deviceId) && enrollmentActive(deviceId)
+      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['serverTimestamp'])
+      && request.resource.data.serverTimestamp == request.time;
    }
    match /callLogs/{callId} {
     // Explicitly imported by the signed-in collector, never unrestricted writes.
@@ -46,6 +52,20 @@ service cloud.firestore {
       && request.resource.data.durationSeconds <= 86400
       && request.resource.data.sharedAt == request.time;
     allow read, delete: if isOwner(deviceId);
+    allow update: if false;
+   }
+   // Diagnostic metadata only: no phone numbers, messages, or microphone content.
+   match /syncLogs/{logId} {
+    allow get, list, delete: if isOwner(deviceId);
+    allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
+     && request.resource.data.keys().hasOnly(['eventType','count','timestamp','status'])
+     && request.resource.data.keys().hasAll(['eventType','count','timestamp','status'])
+     && request.resource.data.eventType in ['CALL_BACKUP','LOCK_SYNC','SMS_BACKUP']
+     && request.resource.data.status == 'SUCCESS'
+     && request.resource.data.count is int
+     && request.resource.data.count >= 0
+     && request.resource.data.count <= 100000
+     && request.resource.data.timestamp == request.time;
     allow update: if false;
    }
    match /liveAudio/{sessionId} {
@@ -94,6 +114,69 @@ service cloud.firestore {
   match /users/{uid} {
    allow get: if request.auth != null && request.auth.uid == uid;
    allow list, create, update, delete: if false;
+   // Owner-private backups are partitioned by physical enrollment.
+   // Only the same authenticated Firebase UID can read or erase call contents.
+   match /deviceCallBackups/{deviceId} {
+    allow read, write: if false;
+    match /calls/{callId} {
+     allow get, list, delete: if signedIn() && request.auth.uid == uid;
+     allow create, update: if signedIn() && request.auth.uid == uid
+      && isCollector(deviceId) && enrollmentActive(deviceId)
+      && request.resource.data.keys().hasOnly([
+       'callId','ownerUid','deviceId','number','direction',
+       'callTimestamp','durationSeconds','source','schemaVersion'
+      ])
+      && request.resource.data.keys().hasAll([
+       'callId','ownerUid','deviceId','number','direction',
+       'callTimestamp','durationSeconds','source','schemaVersion'
+      ])
+      && request.resource.data.callId == callId
+      && request.resource.data.ownerUid == uid
+      && request.resource.data.deviceId == deviceId
+      && request.resource.data.source == 'OWNER_PRIVATE_BACKUP'
+      && request.resource.data.schemaVersion == 2
+      && request.resource.data.number is string
+      && request.resource.data.number.size() > 0
+      && request.resource.data.number.size() <= 48
+      && request.resource.data.direction in ['INCOMING','OUTGOING','MISSED','REJECTED','UNKNOWN']
+      && request.resource.data.callTimestamp is timestamp
+      && request.resource.data.callTimestamp <= request.time + duration.value(1, 'd')
+      && request.resource.data.durationSeconds is int
+      && request.resource.data.durationSeconds >= 0
+      && request.resource.data.durationSeconds <= 86400;
+    }
+   }
+   // Message contents are a private owner-controlled backup, never a device
+   // collection readable by a different Admin account.
+   match /deviceSmsBackups/{deviceId} {
+    allow read, write: if false;
+    match /messages/{smsId} {
+     allow get, list, delete: if signedIn() && request.auth.uid == uid;
+     allow create, update: if signedIn() && request.auth.uid == uid
+      && isCollector(deviceId) && enrollmentActive(deviceId)
+      && request.resource.data.keys().hasOnly([
+       'smsId','ownerUid','deviceId','address','body','direction',
+       'receivedAt','source','schemaVersion'
+      ])
+      && request.resource.data.keys().hasAll([
+       'smsId','ownerUid','deviceId','address','body','direction',
+       'receivedAt','source','schemaVersion'
+      ])
+      && request.resource.data.smsId == smsId
+      && request.resource.data.ownerUid == uid
+      && request.resource.data.deviceId == deviceId
+      && request.resource.data.source == 'OWNER_PRIVATE_SMS_BACKUP'
+      && request.resource.data.schemaVersion == 1
+      && request.resource.data.address is string
+      && request.resource.data.address.size() <= 128
+      && request.resource.data.body is string
+      && request.resource.data.body.size() <= 4000
+      && request.resource.data.direction in ['RECEIVED','SENT']
+      && request.resource.data.receivedAt is timestamp
+      && request.resource.data.receivedAt <= request.time + duration.value(1, 'd');
+    }
+   }
+
    match /callBackups/{callId} {
     allow get, list, delete: if request.auth != null && request.auth.uid == uid;
     allow create, update: if request.auth != null && request.auth.uid == uid
