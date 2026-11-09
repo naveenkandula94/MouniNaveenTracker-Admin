@@ -25,7 +25,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 
-private data class SimpleDevice(val id: String, val name: String, val collectorUid: String, val enabled: Boolean)
+private data class SimpleDevice(val id: String, val name: String, val collectorUid: String, val enabled: Boolean, val lastSyncAt: Long, val syncStatus: String)
 private data class SimpleCall(val id: String, val number: String, val direction: String, val dateMillis: Long, val duration: Int)
 
 @Composable
@@ -63,7 +63,9 @@ fun SimpleAdminScreen() {
                 doc.id,
                 doc.getString("displayName") ?: "My device",
                 doc.getString("collectorUid") ?: "",
-                doc.getBoolean("enabled") != false
+                doc.getBoolean("enabled") != false,
+                doc.getTimestamp("lastSyncAt")?.toDate()?.time ?: 0L,
+                doc.getString("lastSyncStatus") ?: "No sync reported"
             )
         }
         if (selectedDeviceId == null || devices.none { it.id == selectedDeviceId }) {
@@ -165,6 +167,15 @@ fun SimpleAdminScreen() {
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                     Text(device.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                     Text(if (device.enabled) "Enrollment active" else "Enrollment disabled",
+                                        style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        "Last lock/unlock sync: " +
+                                            if (device.lastSyncAt > 0L) SimpleDateFormat(
+                                                "dd MMM yyyy HH:mm", Locale.getDefault()
+                                            ).format(Date(device.lastSyncAt)) else "Not yet",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text("Status: ${device.syncStatus}",
                                         style = MaterialTheme.typography.bodySmall)
                                 }
                             }
