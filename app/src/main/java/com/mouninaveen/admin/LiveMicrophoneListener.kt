@@ -31,7 +31,11 @@ private class ListeningSession(
 }
 
 @Composable
-fun LiveMicrophoneListener(devices: List<Pair<String, String>>, onStatus: (String) -> Unit = {}) {
+fun LiveMicrophoneListener(
+    devices: List<Pair<String, String>>,
+    preferredDeviceId: String? = null,
+    onStatus: (String) -> Unit = {}
+) {
     val context = LocalContext.current
     val db = remember { FirebaseFirestore.getInstance() }
     val auth = remember { FirebaseAuth.getInstance() }
@@ -45,10 +49,16 @@ fun LiveMicrophoneListener(devices: List<Pair<String, String>>, onStatus: (Strin
 
     // Dispose only the session owned by this effect instance. Reading mutable
     // listening state in onDispose closed a newly connected WebRTC peer.
-    LaunchedEffect(devices) {
-        if (devices.size == 1 && deviceId != devices.first().first) {
-            deviceId = devices.first().first
-            status = "Checking for a Collector live-audio session."
+    LaunchedEffect(preferredDeviceId, devices) {
+        val target = preferredDeviceId?.takeIf { id -> devices.any { it.first == id } }
+            ?: devices.firstOrNull()?.first
+        if (deviceId != target) {
+            listening?.stop()
+            listening = null
+            availableRef = null
+            availableId = null
+            deviceId = target
+            status = "Checking live audio for selected phone."
         }
     }
     LaunchedEffect(status) {
@@ -97,22 +107,10 @@ fun LiveMicrophoneListener(devices: List<Pair<String, String>>, onStatus: (Strin
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Listen live", style = MaterialTheme.typography.titleLarge)
             Text("Connect after the Collector user starts audio. This app cannot turn on their microphone.")
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                devices.forEach { item ->
-                    FilterChip(
-                        selected = deviceId == item.first,
-                        onClick = {
-                            listening?.stop()
-                            listening = null
-                            deviceId = item.first
-                            availableRef = null
-                            availableId = null
-                            status = "Tap Find live session to check ${item.second}."
-                        },
-                        label = { Text(item.second) }
-                    )
-                }
-            }
+            Text(
+                "Phone: ${devices.firstOrNull { it.first == deviceId }?.second ?: "Choose a linked phone above"}",
+                style = MaterialTheme.typography.bodyMedium
+            )
             Button(
                 enabled = deviceId != null && !busy && listening == null,
                 onClick = {
