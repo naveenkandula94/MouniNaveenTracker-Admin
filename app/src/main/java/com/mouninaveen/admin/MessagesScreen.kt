@@ -134,13 +134,9 @@ fun MessagesScreen(deviceId: String?, deviceName: String, onStatus: (String) -> 
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Messages", style = MaterialTheme.typography.headlineSmall)
-        Text("Selected phone: $deviceName", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Messages shown here are sent to the owner's private Firebase backup only " +
-                "after Personal_App is explicitly enabled and Android grants READ_SMS. " +
-                "Admin_App cannot read SMS from this phone.",
-            style = MaterialTheme.typography.bodySmall
-        )
+        Text("$deviceName · Owner-only Firebase backup",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         if (deviceId == null) {
             Text("Select a linked phone above. No SMS messages have been requested from this Admin phone.")
