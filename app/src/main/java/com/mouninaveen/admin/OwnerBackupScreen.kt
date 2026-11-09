@@ -31,15 +31,15 @@ private data class BackupCall(
  * No cross-account administrator privilege is used for private backup access.
  */
 @Composable
-fun OwnerBackupScreen(onStatus: (String) -> Unit) {
+fun OwnerBackupScreen(deviceId: String?, deviceName: String, legacy: Boolean = false, onStatus: (String) -> Unit) {
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val scope = rememberCoroutineScope()
     val uid = auth.currentUser?.uid
-    var records by remember(uid) { mutableStateOf(emptyList<BackupCall>()) }
-    var selected by remember(uid) { mutableStateOf(emptySet<String>()) }
-    var lastDocument by remember(uid) { mutableStateOf<DocumentSnapshot?>(null) }
-    var hasMore by remember(uid) { mutableStateOf(false) }
+    var records by remember(uid, deviceId, legacy) { mutableStateOf(emptyList<BackupCall>()) }
+    var selected by remember(uid, deviceId, legacy) { mutableStateOf(emptySet<String>()) }
+    var lastDocument by remember(uid, deviceId, legacy) { mutableStateOf<DocumentSnapshot?>(null) }
+    var hasMore by remember(uid, deviceId, legacy) { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var range by remember { mutableStateOf("All") }
     var startInput by remember { mutableStateOf("") }
@@ -81,7 +81,13 @@ fun OwnerBackupScreen(onStatus: (String) -> Unit) {
 
     fun buildQuery(): Query {
         val owner = uid ?: error("Sign in first.")
-        var query: Query = db.collection("users").document(owner).collection("callBackups")
+        val root = db.collection("users").document(owner)
+        var query: Query = if (legacy) {
+            root.collection("callBackups")
+        } else {
+            val id = deviceId ?: error("Choose a device.")
+            root.collection("deviceCallBackups").document(id).collection("calls")
+        }
         val (start, end) = bounds()
         if (start != null) query = query.whereGreaterThanOrEqualTo("callTimestamp", Timestamp(Date(start)))
         if (end != null) query = query.whereLessThanOrEqualTo("callTimestamp", Timestamp(Date(end)))
@@ -115,18 +121,18 @@ fun OwnerBackupScreen(onStatus: (String) -> Unit) {
         }
     }
 
-    LaunchedEffect(uid, range, refreshKey) {
+    LaunchedEffect(uid, deviceId, legacy, range, refreshKey) {
         records = emptyList()
         lastDocument = null
         selected = emptySet()
-        if (uid != null && range != "Custom") load()
+        if (uid != null && (legacy || deviceId != null) && range != "Custom") load()
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("My backed-up calls", style = MaterialTheme.typography.titleLarge)
+        Text(if (legacy) "Older, unassigned backups" else "$deviceName — backed-up calls", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Automatic call history saved privately under your signed-in Firebase UID. " +
-            "An Admin signed into a different UID cannot access these records.",
+            if (legacy) "These records were saved before device IDs were tracked. They cannot reliably be attributed to OnePlus or another phone."
+            else "Automatic call history backed up by $deviceName. Newest records first. Accessible only to the signed-in owner UID.",
             style = MaterialTheme.typography.bodySmall
         )
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
