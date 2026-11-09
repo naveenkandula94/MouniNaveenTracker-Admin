@@ -41,7 +41,7 @@ fun LiveMicrophoneListener(devices: List<Pair<String, String>>) {
     var listening by remember { mutableStateOf<ListeningSession?>(null) }
     var busy by remember { mutableStateOf(false) }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(listening) {
         onDispose { listening?.stop() }
     }
 
@@ -113,7 +113,11 @@ fun LiveMicrophoneListener(devices: List<Pair<String, String>>) {
                                         "sdp" to candidate.sdp,
                                         "mid" to (candidate.sdpMid ?: ""),
                                         "line" to candidate.sdpMLineIndex
-                                    ))
+                                    )).addOnFailureListener { error ->
+                                        (context as android.app.Activity).runOnUiThread {
+                                            status = "ICE upload failed: ${error.localizedMessage}"
+                                        }
+                                    }
                                 },
                                 onStatus = { message ->
                                     (context as android.app.Activity).runOnUiThread { status = "Audio: $message" }
@@ -134,7 +138,9 @@ fun LiveMicrophoneListener(devices: List<Pair<String, String>>) {
                             }
                             listening = ListeningSession(peer, listOf(ice, sessionMonitor))
                             peer.receiveOffer(offer) { answer ->
-                                ref.update("answer", answer, "status", "ANSWERED")
+                                ref.update("answer", answer, "status", "ANSWERED").addOnFailureListener { error ->
+                                    (context as android.app.Activity).runOnUiThread { status = "Could not publish WebRTC answer: ${error.localizedMessage}" }
+                                }
                             }
                             status = "Connecting to Collector live microphone…"
                         } catch (e: Exception) {
