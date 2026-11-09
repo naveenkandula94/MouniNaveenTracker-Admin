@@ -32,3 +32,16 @@ Publish the latest **complete** `firebase/firestore.rules` in Firebase Console b
 Firebase document deletion is permanent. Disable private backup on Personal_App before deleting all its backup records or the worker may create them again. Live session signaling deletion requires the session to be ended.
 
 **The compiled build does not establish Play Store compliance, continuous real-time execution, or end-to-end reliability. Test each phone and the published rules.**
+
+## Dashboard tabs and live status
+
+Seven horizontally scrollable navigation tabs: **Home, Calls, Messages, Lock, Live, Logs, Settings**. The global phone dropdown at the top selects the enrollment used by all device-specific screens. The selection is not a way to access private records belonging to another Firebase UID.
+
+- **Home** listens to the selected Admin's `devices` query in realtime to show each phone's latest reported lock-sync time. **Checked recently** reflects the latest received sync timestamp; it is not a guarantee that the phone is online now.
+- **Lock** shows the selected phone's keyguard transition events newest-first and can refresh automatically from a Firestore snapshot listener; date-filter, select, delete features are present.
+- **Logs** shows device-scoped `syncLogs` (lock-sync and private-backup counts/status only) alongside locally recorded Admin troubleshooting events.
+- **Messages** states accurately that SMS/message-content sync has **not** been implemented or granted. There is no READ_SMS permission, automatic SMS content exfiltration or WhatsApp/Instagram collection. A future messaging feature would require an eligible default-handler or approved backup/restore or cross-device sync use case and explicit authorization.
+
+## Why 15 seconds is not continuous background realtime
+
+Personal_App checks for lock events roughly every 15 seconds **while the Activity is visible**, and queues checks for some screen transitions while its process is alive. Android may restrict or delay background work after the device locks. WorkManager periodic tasks are scheduled at 15 minutes minimum, not 15 seconds. Admin sees data as Firestore receives it; a timestamp is not a proof of present online state.
