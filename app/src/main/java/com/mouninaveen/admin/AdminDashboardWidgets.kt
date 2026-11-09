@@ -33,10 +33,14 @@ internal fun AdminMetricTile(
 }
 
 @Composable
-internal fun AdminStatusDot(isRecent: Boolean) {
+internal fun AdminStatusDot(isRecent: Boolean, hasEverSynced: Boolean = true) {
     val color = if (isRecent) Color(0xFF17836C) else Color(0xFFAF7937)
     Text(
-        if (isRecent) "● Checked recently" else "● Last check older",
+        when {
+            !hasEverSynced -> "● No successful Firebase sync yet"
+            isRecent -> "● Checked recently"
+            else -> "● Last check older"
+        },
         style = MaterialTheme.typography.labelMedium,
         color = color
     )
