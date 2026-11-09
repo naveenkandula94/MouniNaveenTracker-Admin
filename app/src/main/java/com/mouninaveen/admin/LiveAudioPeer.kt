@@ -10,6 +10,8 @@ import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
+import org.webrtc.RTCStatsCollectorCallback
+import kotlin.math.sqrt
 import org.webrtc.SessionDescription
 import org.webrtc.audio.JavaAudioDeviceModule as NewAudioDeviceModule
 
@@ -41,6 +43,10 @@ internal class LiveAudioPeer(
     private var track: AudioTrack? = null
     private val pendingIce = mutableListOf<IceCandidate>()
     private var remoteReady = false
+    @Volatile private var closed = false
+    @Volatile private var playbackMuted = false
+    private var lastEnergy: Double? = null
+    private var lastSampleDuration: Double? = null
 
     init {
         init(context)
@@ -65,7 +71,9 @@ internal class LiveAudioPeer(
                 override fun onRemoveStream(stream: MediaStream?) {}
                 override fun onDataChannel(channel: org.webrtc.DataChannel?) {}
                 override fun onRenegotiationNeeded() {}
-                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
+                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+                    (receiver?.track() as? AudioTrack)?.setEnabled(!playbackMuted)
+                }
             }
         )) { "Could not create WebRTC audio peer" }
         if (broadcaster) {
@@ -137,7 +145,71 @@ internal class LiveAudioPeer(
         pendingIce.clear()
     }
 
+    /**
+     * Collect the audio level from the active WebRTC peer (0 to 1).
+     * Sender uses local audio media-source stats; listener uses incoming RTP.
+     * No new microphone capture, audio recording, or Firebase data is involved.
+     */
+    fun sampleAudioLevel(onLevel: (Float) -> Unit) {
+        if (closed) { onLevel(0f); return }
+        try {
+            peer.getStats(RTCStatsCollectorCallback { report ->
+                if (closed) return@RTCStatsCollectorCallback
+                val matching = report.statsMap.values.filter { stat ->
+                    val values = stat.members
+                    if (broadcaster) {
+                        stat.type == "media-source" &&
+                            (values["kind"] == "audio" || values["mediaType"] == "audio")
+                    } else {
+                        stat.type == "inbound-rtp" &&
+                            (values["kind"] == "audio" || values["mediaType"] == "audio")
+                    }
+                }
+                val amplitudes = matching.mapNotNull { stat ->
+                    (stat.members["audioLevel"] as? Number)?.toDouble()
+                }
+                var measured = amplitudes.maxOrNull()
+                if (measured == null) {
+                    // Some native WebRTC builds report only cumulative audio energy.
+                    // Its derivative is mean square audio amplitude in the interval.
+                    val currentEnergy = matching.mapNotNull {
+                        (it.members["totalAudioEnergy"] as? Number)?.toDouble()
+                    }.maxOrNull()
+                    val currentDuration = matching.mapNotNull {
+                        (it.members["totalSamplesDuration"] as? Number)?.toDouble()
+                    }.maxOrNull()
+                    if (currentEnergy != null && currentDuration != null) {
+                        val deltaEnergy = lastEnergy?.let { currentEnergy - it }
+                        val deltaDuration = lastSampleDuration?.let { currentDuration - it }
+                        if (deltaEnergy != null && deltaDuration != null && deltaDuration > 0.0) {
+                            measured = sqrt((deltaEnergy / deltaDuration).coerceIn(0.0, 1.0))
+                        }
+                        lastEnergy = currentEnergy
+                        lastSampleDuration = currentDuration
+                    }
+                }
+                val levelValue = measured ?: 0.0
+                // WebRTC reports a 0..1 amplitude, which is frequently small
+                // for ordinary speech. Use sqrt for a readable display.
+                onLevel(sqrt(levelValue.coerceIn(0.0, 1.0)).toFloat())
+            })
+        } catch (_: Exception) {
+            onLevel(0f)
+        }
+    }
+
+    /** Mutes only the Admin phone's received audio, never the remote phone. */
+    fun setPlaybackMuted(muted: Boolean) {
+        playbackMuted = muted
+        if (closed || broadcaster) return
+        peer.receivers.forEach { receiver ->
+            (receiver.track() as? AudioTrack)?.setEnabled(!muted)
+        }
+    }
+
     fun close() {
+        if (closed) return
+        closed = true
         track?.setEnabled(false)
         peer.close()
         peer.dispose()

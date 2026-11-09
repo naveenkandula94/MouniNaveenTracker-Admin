@@ -3,7 +3,6 @@ package com.mouninaveen.admin
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,19 +26,18 @@ private data class BackupCall(
 )
 
 /**
- * Owner account only. Firestore security rules also require request.auth.uid == uid.
- * No cross-account administrator privilege is used for private backup access.
+ * Read/manage cloud documents CREATED BY Personal_App, not by Admin_App.\n * Firestore requires request.auth.uid == uid for owner-private call history.\n * Admin_App never reads Android CallLog or schedules a phone backup.
  */
 @Composable
-fun OwnerBackupScreen(onStatus: (String) -> Unit) {
+fun OwnerBackupScreen(deviceId: String?, deviceName: String, legacy: Boolean = false, onStatus: (String) -> Unit) {
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val scope = rememberCoroutineScope()
     val uid = auth.currentUser?.uid
-    var records by remember(uid) { mutableStateOf(emptyList<BackupCall>()) }
-    var selected by remember(uid) { mutableStateOf(emptySet<String>()) }
-    var lastDocument by remember(uid) { mutableStateOf<DocumentSnapshot?>(null) }
-    var hasMore by remember(uid) { mutableStateOf(false) }
+    var records by remember(uid, deviceId, legacy) { mutableStateOf(emptyList<BackupCall>()) }
+    var selected by remember(uid, deviceId, legacy) { mutableStateOf(emptySet<String>()) }
+    var lastDocument by remember(uid, deviceId, legacy) { mutableStateOf<DocumentSnapshot?>(null) }
+    var hasMore by remember(uid, deviceId, legacy) { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var range by remember { mutableStateOf("All") }
     var startInput by remember { mutableStateOf("") }
@@ -81,7 +79,13 @@ fun OwnerBackupScreen(onStatus: (String) -> Unit) {
 
     fun buildQuery(): Query {
         val owner = uid ?: error("Sign in first.")
-        var query: Query = db.collection("users").document(owner).collection("callBackups")
+        val root = db.collection("users").document(owner)
+        var query: Query = if (legacy) {
+            root.collection("callBackups")
+        } else {
+            val id = deviceId ?: error("Choose a device.")
+            root.collection("deviceCallBackups").document(id).collection("calls")
+        }
         val (start, end) = bounds()
         if (start != null) query = query.whereGreaterThanOrEqualTo("callTimestamp", Timestamp(Date(start)))
         if (end != null) query = query.whereLessThanOrEqualTo("callTimestamp", Timestamp(Date(end)))
@@ -108,26 +112,30 @@ fun OwnerBackupScreen(onStatus: (String) -> Unit) {
                 if (!more) selected = emptySet()
                 lastDocument = result.documents.lastOrNull()
                 hasMore = result.size() == 100
-                onStatus("Loaded ${records.size} private backup records for this account.")
+                onStatus("Displaying ${records.size} cloud records uploaded by Personal_App.")
             } catch (e: Exception) {
                 onStatus("Private call backup query failed: ${e.localizedMessage}")
             } finally { loading = false }
         }
     }
 
-    LaunchedEffect(uid, range, refreshKey) {
+    LaunchedEffect(uid, deviceId, legacy, range, refreshKey) {
         records = emptyList()
         lastDocument = null
         selected = emptySet()
-        if (uid != null && range != "Custom") load()
+        if (uid != null && (legacy || deviceId != null) && range != "Custom") load()
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("My backed-up calls", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Automatic call history saved privately under your signed-in Firebase UID. " +
-            "An Admin signed into a different UID cannot access these records.",
-            style = MaterialTheme.typography.bodySmall
+            if (legacy) "Earlier Personal_App records" else "$deviceName • Call history",
+            style = MaterialTheme.typography.titleLarge
+        )
+        Text(
+            if (legacy) "Unassigned records from earlier backups"
+            else "Synced from Personal_App · Owner-only Firebase backup",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("All","Today","7 days","30 days","Custom").forEach { option ->
@@ -194,7 +202,13 @@ fun OwnerBackupScreen(onStatus: (String) -> Unit) {
                                     try {
                                         val owner = auth.currentUser?.uid ?: error("Signed out.")
                                         check(owner == uid) { "Firebase account changed." }
-                                        val collection = db.collection("users").document(owner).collection("callBackups")
+                                        val root = db.collection("users").document(owner)
+                                        val collection = if (legacy) {
+                                            root.collection("callBackups")
+                                        } else {
+                                            val id = deviceId ?: error("Choose a phone before deleting.")
+                                            root.collection("deviceCallBackups").document(id).collection("calls")
+                                        }
                                         var total = 0
                                         if (mode == "selected") {
                                             chosen.chunked(200).forEach { part ->
@@ -227,7 +241,11 @@ fun OwnerBackupScreen(onStatus: (String) -> Unit) {
             }
         }
 
-        if (records.isEmpty()) Text("No records loaded for this filter. The backup may be empty, or you may need to refresh.")
+        if (records.isEmpty()) Text(
+            if (!legacy && deviceId == null)
+                "No phone selected. Add a device in Admin_App Settings, then choose that device above. Older Personal_App uploads remain under Earlier records."
+            else "No Personal_App records for this phone and date filter yet. This Admin app cannot start a backup; check Personal_App on the selected phone."
+        )
         records.forEach { call ->
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth().padding(10.dp)) {
