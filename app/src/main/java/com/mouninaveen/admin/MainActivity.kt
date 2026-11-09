@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
                 surface = androidx.compose.ui.graphics.Color(0xFF1B2040),
                 background = androidx.compose.ui.graphics.Color(0xFF10152E)
             )) {
-                AdminScreen()
+                SimpleAdminScreen()
             }
         }
     }
