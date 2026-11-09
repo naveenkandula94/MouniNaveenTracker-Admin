@@ -24,7 +24,12 @@ private data class ActivityRecord(
 )
 
 @Composable
-fun DeviceDataScreen(deviceId: String, initialKind: String = "Lock/unlock", onStatus: (String) -> Unit) {
+fun DeviceDataScreen(
+    deviceId: String,
+    initialKind: String = "Lock/unlock",
+    fixedKind: Boolean = false,
+    onStatus: (String) -> Unit
+) {
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val scope = rememberCoroutineScope()
@@ -108,16 +113,35 @@ fun DeviceDataScreen(deviceId: String, initialKind: String = "Lock/unlock", onSt
         reload()
     }
 
+    // Firestore live subscription refreshes the newest records when a phone uploads.
+    // It is removed automatically when the tab closes or the device changes.
+    DisposableEffect(deviceId, kind, range) {
+        val subscription = query().limit(1).addSnapshotListener { _, error ->
+            if (error != null) onStatus("Live event updates unavailable: ${error.localizedMessage}")
+            else reload()
+        }
+        onDispose { subscription.remove() }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(if (kind == "Sync logs") "Device sync logs" else "Device activity", style = MaterialTheme.typography.titleLarge)
+        Text(
+            when (kind) {
+                "Sync logs" -> "Sync activity · newest first"
+                "Lock/unlock" -> "Screen lock history · newest first"
+                else -> "Audio sessions · newest first"
+            },
+            style = MaterialTheme.typography.titleLarge
+        )
         Text("View and manage device event metadata in Firebase.", style = MaterialTheme.typography.bodySmall)
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Lock/unlock", "Audio sessions", "Sync logs").forEach { value ->
-                FilterChip(
-                    selected = kind == value,
-                    onClick = { kind = value },
-                    label = { Text(value) }
-                )
+        if (!fixedKind) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Lock/unlock", "Audio sessions", "Sync logs").forEach { value ->
+                    FilterChip(
+                        selected = kind == value,
+                        onClick = { kind = value },
+                        label = { Text(value) }
+                    )
+                }
             }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
