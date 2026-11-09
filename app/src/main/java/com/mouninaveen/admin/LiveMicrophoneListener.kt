@@ -19,10 +19,13 @@ import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.Source
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.CancellationException
 import org.webrtc.IceCandidate
 
 private class ListeningSession(
@@ -68,7 +71,8 @@ fun LiveMicrophoneListener(
         scope.launch {
             var newPeer: LiveAudioPeer? = null
             try {
-                val snapshot = ref.get().await()
+                status = "Checking selected phone's microphone offer in Firebase…"
+                val snapshot = withTimeout(15_000L) { ref.get(Source.SERVER).await() }
                 check(snapshot.getString("status") == "OFFERED") { "The microphone session is not available." }
                 val offer = snapshot.getString("offer") ?: error("The offer has not arrived.")
                 val peer = LiveAudioPeer(
@@ -109,17 +113,31 @@ fun LiveMicrophoneListener(
                 listening = ListeningSession(peer, listOf(ice, sessionMonitor))
                 joinedSessionId = ref.id
                 peer.receiveOffer(offer) { answer ->
-                    ref.update("answer", answer, "status", "ANSWERED").addOnFailureListener { error ->
-                        (context as android.app.Activity).runOnUiThread { status = "Could not publish WebRTC answer: ${error.localizedMessage}" }
-                    }
+                    ref.update("answer", answer, "status", "ANSWERED")
+                        .addOnSuccessListener {
+                            (context as android.app.Activity).runOnUiThread {
+                                status = "Microphone answer published. Establishing encrypted audio connection…"
+                            }
+                        }
+                        .addOnFailureListener { error ->
+                            (context as android.app.Activity).runOnUiThread {
+                                status = "Could not publish WebRTC answer: ${error.localizedMessage}"
+                                listening?.stop()
+                                listening = null
+                                joinedSessionId = null
+                            }
+                        }
                 }
                 status = "Connecting to Collector live microphone…"
+            } catch (e: CancellationException) {
+                newPeer?.close()
+                throw e
             } catch (e: Exception) {
                 newPeer?.close()
                 listening?.stop()
                 listening = null
                 joinedSessionId = null
-                status = "Listening failed: ${e.localizedMessage}"
+                status = "Listening failed: ${e.localizedMessage}. Check the selected phone and Firebase permissions."
             } finally { busy = false }
         }
 
@@ -171,7 +189,13 @@ fun LiveMicrophoneListener(
                         } else {
                             availableRef = null
                             availableId = null
-                            status = "No available microphone offer. Start a session in Personal_App."
+                            val starting = snapshot?.documents?.firstOrNull {
+                                it.getString("status") == "STARTING"
+                            }
+                            status = if (starting != null)
+                                "Collector is registering a microphone session. Waiting for the Firebase offer…"
+                            else
+                                "No available microphone offer for this selected phone. Start a fresh session in Personal_App and confirm the same phone selection."
                         }
                     }
                 }
@@ -260,7 +284,7 @@ fun LiveMicrophoneListener(
                             } else {
                                 availableRef = doc.reference
                                 availableId = doc.id
-                                status = "The Collector has started a live session. Tap Listen now."
+                                status = "The selected Collector has published an offer. Tap Listen now."
                             }
                         } catch (e: Exception) {
                             status = "Could not find a session: ${e.localizedMessage}"
