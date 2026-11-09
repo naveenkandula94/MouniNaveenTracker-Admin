@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -109,6 +110,7 @@ private fun AdminScreen() {
     var searchText by remember { mutableStateOf("") }
     var eventFilter by remember { mutableStateOf("ALL") }
     var selectedTab by remember { mutableStateOf(0) }
+    var selectedNavigation by remember { mutableIntStateOf(0) }
     var callDevice by remember { mutableStateOf<DeviceRow?>(null) }
     var sharedCalls by remember { mutableStateOf(emptyList<SharedCallRow>()) }
 
@@ -226,6 +228,19 @@ private fun AdminScreen() {
         }
         callDevice = device
         status = "Loaded ${sharedCalls.size} manually shared call records for ${device.name}."
+    }
+
+    LaunchedEffect(auth.currentUser?.uid) {
+        if (auth.currentUser != null && !signedIn) {
+            try {
+                verifyAdmin()
+                loadDevices()
+                signedIn = true
+                password = ""
+            } catch (e: Exception) {
+                status = "Account setup needed: ${e.localizedMessage}. Check the admins document and published Firestore rules."
+            }
+        }
     }
 
     val visibleEvents = events.filter { event ->
@@ -369,10 +384,23 @@ private fun AdminScreen() {
                     }
                 }
 
-                ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp) {
-                    listOf("Overview", "Devices", "Lock timeline", "Calls", "Live audio", "Settings", "Diagnostics").forEachIndexed { index, name ->
-                        Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(name) })
+                ScrollableTabRow(selectedTabIndex = selectedNavigation, edgePadding = 0.dp) {
+                    listOf("Home", "Calls", "Live audio", "Settings").forEachIndexed { index, name ->
+                        Tab(
+                            selected = selectedNavigation == index,
+                            onClick = {
+                                selectedNavigation = index
+                                selectedTab = listOf(0, 3, 4, 5)[index]
+                            },
+                            text = { Text(name) }
+                        )
                     }
+                }
+                if (selectedTab == 1 || selectedTab == 2 || selectedTab == 6) {
+                    TextButton(onClick = {
+                        selectedTab = 5
+                        selectedNavigation = 3
+                    }) { Text("Back to Settings") }
                 }
                 if (selectedTab == 0) {
                     val now = System.currentTimeMillis()
@@ -390,14 +418,14 @@ private fun AdminScreen() {
                         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Lock / unlock activity", style = MaterialTheme.typography.titleMedium)
                             Text("Select a device under Devices to see event history and timestamps.")
-                            Button(onClick = { selectedTab = 1 }) { Text("View managed devices") }
+                            Button(onClick = { selectedTab = 3; selectedNavigation = 1 }) { Text("View shared call history") }
                         }
                     }
                     ElevatedCard {
                         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Call history", style = MaterialTheme.typography.titleMedium)
                             Text("View records explicitly imported and approved in the Collector. No automatic call-history extraction.")
-                            OutlinedButton(onClick = { selectedTab = 3 }) { Text("Open call history") }
+                            OutlinedButton(onClick = { selectedTab = 3; selectedNavigation = 1 }) { Text("View calls") }
                         }
                     }
                 }
@@ -755,7 +783,7 @@ private fun AdminScreen() {
                     Text("Only owner-approved imports are shown. No call recordings or message contents.", style = MaterialTheme.typography.labelSmall)
                 }
                 if (selectedTab == 4) {
-                    LiveMicrophoneListener(devices.map { it.id to it.name })
+                    Text("Live audio", style = MaterialTheme.typography.titleLarge)
                 }
                 if (selectedTab == 6) {
                     ElevatedCard(Modifier.fillMaxWidth()) {
@@ -789,9 +817,21 @@ private fun AdminScreen() {
                             HorizontalDivider()
                             Text("To revoke collection, disable a device on the Devices page. The device owner can also withdraw consent in the Collector.")
                             OutlinedButton(onClick = { runTask { loadDevices() } }, enabled = !busy) { Text("Refresh devices") }
+                            OutlinedButton(onClick = { selectedTab = 6 }) { Text("Diagnostics & permission test") }
+                            TextButton(onClick = { selectedTab = 1 }) { Text("Device setup / pairing (advanced)") }
+                            TextButton(onClick = { selectedTab = 2 }) { Text("Lock/unlock timeline") }
                         }
                     }
                 }
+            }
+
+            // Preserve the WebRTC listening peer when moving to another Admin tab.
+            Box(
+                modifier = Modifier.fillMaxWidth()
+                    .then(if (selectedTab == 4) Modifier else Modifier.height(0.dp))
+                    .clipToBounds()
+            ) {
+                LiveMicrophoneListener(devices.map { it.id to it.name })
             }
 
             Text(
