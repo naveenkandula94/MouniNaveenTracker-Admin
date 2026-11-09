@@ -188,6 +188,7 @@ fun SimpleAdminScreen() {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
                     Text("ADMIN_APP  /  DASHBOARD", style = MaterialTheme.typography.labelMedium, color = Color(0xFF2955A5), fontWeight = FontWeight.Bold)
                     Text("Device overview", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text("v1.1.2 • Owner dashboard", style = MaterialTheme.typography.labelSmall)
                     Text(if (authenticated) "${devices.size} linked phone(s)" else "Secure sign in", style = MaterialTheme.typography.bodySmall)
                 }
             }
