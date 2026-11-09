@@ -48,6 +48,7 @@ fun SimpleAdminScreen() {
     var selectedCallIds by remember { mutableStateOf(emptySet<String>()) }
     var deleteMode by remember { mutableStateOf("") }
     var callsSource by remember { mutableStateOf("private") }
+    var showDeviceActivity by remember { mutableStateOf(false) }
     var diagnosticsVersion by remember { mutableIntStateOf(0) }
 
     suspend fun verifyAndLoad() {
@@ -192,6 +193,16 @@ fun SimpleAdminScreen() {
                             }
                         }
                     }
+                    if (selectedDeviceId != null) {
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { showDeviceActivity = !showDeviceActivity }
+                        ) { Text(if (showDeviceActivity) "Hide device activity" else "Show lock/unlock and audio-session data") }
+                        if (showDeviceActivity) {
+                            DeviceDataScreen(deviceId = selectedDeviceId!!, onStatus = { status = it })
+                        }
+                    }
+
                 }
                 if (tab == 1) {
                     Text("Call history", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
