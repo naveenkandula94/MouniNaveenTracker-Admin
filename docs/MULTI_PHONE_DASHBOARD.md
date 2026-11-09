@@ -40,8 +40,14 @@ Seven horizontally scrollable navigation tabs: **Home, Calls, Messages, Lock, Li
 - **Home** listens to the selected Admin's `devices` query in realtime to show each phone's latest reported lock-sync time. **Checked recently** reflects the latest received sync timestamp; it is not a guarantee that the phone is online now.
 - **Lock** shows the selected phone's keyguard transition events newest-first and can refresh automatically from a Firestore snapshot listener; date-filter, select, delete features are present.
 - **Logs** shows device-scoped `syncLogs` (lock-sync and private-backup counts/status only) alongside locally recorded Admin troubleshooting events.
-- **Messages** states accurately that SMS/message-content sync has **not** been implemented or granted. There is no READ_SMS permission, automatic SMS content exfiltration or WhatsApp/Instagram collection. A future messaging feature would require an eligible default-handler or approved backup/restore or cross-device sync use case and explicit authorization.
+- **Messages** views opt-in, owner-private SMS backups by selected device under `users/{uid}/deviceSmsBackups/{deviceId}/messages`. The backup is created only by Personal_App when an eligible Android READ_SMS grant exists and the owner separately enables the feature. Admin_App itself has no READ_SMS permission. Different owner UIDs remain isolated.
 
 ## Why 15 seconds is not continuous background realtime
 
 Personal_App checks for lock events roughly every 15 seconds **while the Activity is visible**, and queues checks for some screen transitions while its process is alive. Android may restrict or delay background work after the device locks. WorkManager periodic tasks are scheduled at 15 minutes minimum, not 15 seconds. Admin sees data as Firestore receives it; a timestamp is not a proof of present online state.
+
+## Microphone playback controls and session recovery
+
+In Admin_App > **Live**, select the named phone from the global dropdown and tap **Listen now** on an owner-started Personal_App session. Admin's **Loudspeaker** toggle chooses built-in speaker or earpiece/default route, and **Mute this phone** silences local received playback only (it does not mute or control another phone's microphone). The stream continues on the source phone after the owner switches apps or locks their screen because Personal_App uses an explicit user-started Android microphone foreground service with persistent notification and Stop action. When a publisher network handover replaces an active session, Admin will attempt to rejoin the new offer within a two-minute recovery window after the Admin user initially joined; this is not guaranteed across all networks, background restrictions, or process death.
+
+Never claim microphone reactivation after force-stop or boot. On Android 14+ microphone FGS cannot be launched from BOOT_COMPLETED; microphone while-in-use restrictions apply. Owner must tap Start again after a restart. WebRTC audio stats meters show sampled input on Personal_App and inbound audio on Admin_App, not proof of real-world audibility.
