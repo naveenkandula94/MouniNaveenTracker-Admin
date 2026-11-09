@@ -1,6 +1,8 @@
 package com.mouninaveen.admin
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -179,12 +181,11 @@ fun SimpleAdminScreen() {
                     Text("Shared call history", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text("Only calls deliberately shared by Collector appear here. The owner's automatic private backup is not an Admin feed.", style = MaterialTheme.typography.bodySmall)
                     if (devices.size > 1) {
-                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                            devices.take(3).forEachIndexed { i, d ->
-                                SegmentedButton(
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            devices.forEach { d ->
+                                FilterChip(
                                     selected = selectedDeviceId == d.id,
                                     onClick = { selectedDeviceId = d.id },
-                                    shape = SegmentedButtonDefaults.itemShape(i, devices.take(3).size),
                                     label = { Text(d.name, maxLines = 1) }
                                 )
                             }
