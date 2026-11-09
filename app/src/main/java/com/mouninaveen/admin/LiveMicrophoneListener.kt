@@ -159,9 +159,7 @@ fun LiveMicrophoneListener(
                         status = "Live-session query failed: ${error.localizedMessage}"
                     } else if (listening == null) {
                         val doc = snapshot?.documents?.firstOrNull {
-                            it.getString("status") == "OFFERED" &&
-                                (System.currentTimeMillis() -
-                                    (it.getTimestamp("createdAt")?.toDate()?.time ?: 0L) < 10 * 60_000L)
+                            it.getString("status") == "OFFERED"
                         }
                         if (doc != null) {
                             availableRef = doc.reference
@@ -173,7 +171,7 @@ fun LiveMicrophoneListener(
                         } else {
                             availableRef = null
                             availableId = null
-                            status = "No live microphone session. Start one on Collector first."
+                            status = "No available microphone offer. Start a session in Personal_App."
                         }
                     }
                 }
@@ -253,13 +251,12 @@ fun LiveMicrophoneListener(
                                 .orderBy("createdAt", Query.Direction.DESCENDING)
                                 .limit(5).get().await()
                             val doc = snapshot.documents.firstOrNull {
-                                it.getString("status") == "OFFERED" &&
-                                    (System.currentTimeMillis() - (it.getTimestamp("createdAt")?.toDate()?.time ?: 0L) < 10 * 60_000L)
+                                it.getString("status") == "OFFERED"
                             }
                             if (doc == null) {
                                 availableRef = null
                                 availableId = null
-                                status = "No recent live session. Ask the Collector user to tap Start live microphone."
+                                status = "No available microphone offer. On Personal_App start a new owner-approved session."
                             } else {
                                 availableRef = doc.reference
                                 availableId = doc.id
