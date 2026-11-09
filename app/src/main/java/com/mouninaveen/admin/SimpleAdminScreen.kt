@@ -47,6 +47,7 @@ fun SimpleAdminScreen() {
     var diagnosticText by remember { mutableStateOf("Not checked") }
     var selectedCallIds by remember { mutableStateOf(emptySet<String>()) }
     var deleteMode by remember { mutableStateOf("") }
+    var callsSource by remember { mutableStateOf("private") }
     var diagnosticsVersion by remember { mutableIntStateOf(0) }
 
     suspend fun verifyAndLoad() {
@@ -193,8 +194,23 @@ fun SimpleAdminScreen() {
                     }
                 }
                 if (tab == 1) {
-                    Text("Shared call history", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Only calls deliberately shared by Collector appear here. The owner's automatic private backup is not an Admin feed.", style = MaterialTheme.typography.bodySmall)
+                    Text("Call history", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = callsSource == "private",
+                            onClick = { callsSource = "private" },
+                            label = { Text("My automatic backup") }
+                        )
+                        FilterChip(
+                            selected = callsSource == "shared",
+                            onClick = { callsSource = "shared" },
+                            label = { Text("Shared records") }
+                        )
+                    }
+                    if (callsSource == "private") {
+                        OwnerBackupScreen(onStatus = { status = it })
+                    } else {
+                    Text("Only records separately shared with the enrolled Admin are listed here.", style = MaterialTheme.typography.bodySmall)
                     if (devices.size > 1) {
                         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             devices.forEach { d ->
@@ -322,6 +338,7 @@ fun SimpleAdminScreen() {
                                 }
                             }
                         }
+                    }
                     }
                 }
                 if (tab == 2) {
