@@ -35,11 +35,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(
-                primary = androidx.compose.ui.graphics.Color(0xFFB9A3FF),
-                secondary = androidx.compose.ui.graphics.Color(0xFF67D7C5),
-                surface = androidx.compose.ui.graphics.Color(0xFF1B2040),
-                background = androidx.compose.ui.graphics.Color(0xFF10152E)
+            MaterialTheme(colorScheme = lightColorScheme(
+                primary = androidx.compose.ui.graphics.Color(0xFF2858AD),
+                onPrimary = androidx.compose.ui.graphics.Color.White,
+                secondary = androidx.compose.ui.graphics.Color(0xFF177F7C),
+                surface = androidx.compose.ui.graphics.Color(0xFFFFFFFF),
+                background = androidx.compose.ui.graphics.Color(0xFFF4F7FC),
+                onBackground = androidx.compose.ui.graphics.Color(0xFF17213A),
+                onSurface = androidx.compose.ui.graphics.Color(0xFF17213A)
             )) {
                 SimpleAdminScreen()
             }
