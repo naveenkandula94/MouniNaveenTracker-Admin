@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +47,7 @@ fun SimpleAdminScreen() {
     var calls by remember { mutableStateOf(emptyList<SimpleCall>()) }
     var selectedDeviceId by remember { mutableStateOf<String?>(null) }
     var tab by remember { mutableIntStateOf(0) }
+    var deviceMenuExpanded by remember { mutableStateOf(false) }
     var showSetup by remember { mutableStateOf(false) }
     var newPhoneName by remember { mutableStateOf("") }
     var newCollectorUid by remember { mutableStateOf("") }
@@ -134,24 +136,33 @@ fun SimpleAdminScreen() {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
-            Surface(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars), tonalElevation = 2.dp) {
+            Surface(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars), color = Color(0xFFE5EFFF), tonalElevation = 2.dp) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
-                    Text("ADMIN", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                    Text("My devices", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("ADMIN_APP  •  CONTROL CENTER", style = MaterialTheme.typography.labelMedium, color = Color(0xFF2955A5))
+                    Text("My devices", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text(if (authenticated) "Viewer only • ${devices.size} linked phone(s)" else "Secure sign in", style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
         bottomBar = {
             if (authenticated) {
-                NavigationBar {
-                    listOf("Home", "Calls", "Live", "Logs", "Settings").forEachIndexed { i, label ->
-                        NavigationBarItem(
-                            selected = tab == i,
-                            onClick = { tab = i },
-                            icon = { Text(listOf("⌂", "☎", "◉", "≡", "⚙")[i]) },
-                            label = { Text(label) }
-                        )
+                NavigationBar(containerColor = Color(0xFFEAF0FF)) {
+                    // Seven independent destinations are scrollable rather than
+                    // squeezing unreadable labels into a narrow phone screen.
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                    ) {
+                        listOf("Home", "Calls", "Messages", "Lock", "Live", "Logs", "Settings")
+                            .forEachIndexed { i, label ->
+                                NavigationBarItem(
+                                    modifier = Modifier.width(84.dp),
+                                    selected = tab == i,
+                                    onClick = { tab = i },
+                                    icon = { Text(listOf("⌂", "☎", "✉", "▣", "◉", "≡", "⚙")[i]) },
+                                    label = { Text(label, maxLines = 1) },
+                                    alwaysShowLabel = true
+                                )
+                            }
                     }
                 }
             }
@@ -185,20 +196,28 @@ fun SimpleAdminScreen() {
                 if (devices.isNotEmpty()) {
                     val chosen = devices.firstOrNull { it.id == selectedDeviceId }
                     Text("Selected phone", style = MaterialTheme.typography.labelMedium)
-                    Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        devices.forEach { phone ->
-                            FilterChip(
-                                selected = selectedDeviceId == phone.id,
-                                onClick = {
-                                    selectedDeviceId = phone.id
-                                    selectedCallIds = emptySet()
-                                    deleteMode = ""
-                                },
-                                label = { Text(phone.name) }
-                            )
+                    Box {
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { deviceMenuExpanded = true }
+                        ) {
+                            Text("▣  ${chosen?.name ?: "Select a phone"}    ▾")
+                        }
+                        DropdownMenu(
+                            expanded = deviceMenuExpanded,
+                            onDismissRequest = { deviceMenuExpanded = false }
+                        ) {
+                            devices.forEach { phone ->
+                                DropdownMenuItem(
+                                    text = { Text("${phone.name}  ${if (phone.enabled) "✓" else "(disabled)"}") },
+                                    onClick = {
+                                        selectedDeviceId = phone.id
+                                        selectedCallIds = emptySet()
+                                        deleteMode = ""
+                                        deviceMenuExpanded = false
+                                    }
+                                )
+                            }
                         }
                     }
                     if (chosen != null) {
@@ -212,7 +231,8 @@ fun SimpleAdminScreen() {
                 }
                 if (tab == 0) {
                     Text("Overview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    ElevatedCard(Modifier.fillMaxWidth()) {
+                    ElevatedCard(Modifier.fillMaxWidth(),
+                        colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFE4F5F0))) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("${devices.size} linked device(s)", style = MaterialTheme.typography.headlineSmall)
                             Text(if (devices.isEmpty()) "Add your phones under Settings, then choose the phone in the selector."
@@ -403,15 +423,34 @@ fun SimpleAdminScreen() {
                     }
                 }
                 if (tab == 2) {
-                    Text("Live microphone", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Collector user must explicitly start the session. Admin cannot remotely activate a microphone.", style = MaterialTheme.typography.bodySmall)
+                    MessagesScreen()
                 }
                 if (tab == 3) {
+                    Text("Lock / unlock", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    if (selectedDeviceId == null) {
+                        Text("Select a linked phone from the dropdown above to view its screen state history.")
+                    } else {
+                        key(selectedDeviceId) {
+                            DeviceDataScreen(
+                                deviceId = selectedDeviceId!!,
+                                initialKind = "Lock/unlock",
+                                fixedKind = true,
+                                onStatus = { status = it }
+                            )
+                        }
+                    }
+                }
+                if (tab == 4) {
+                    Text("Live microphone", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Listen to a live session started by the selected phone's owner. Admin cannot activate a microphone remotely.", style = MaterialTheme.typography.bodySmall)
+                }
+                if (tab == 5) {
                     if (selectedDeviceId != null) {
                         key(selectedDeviceId) {
                             DeviceDataScreen(
                                 deviceId = selectedDeviceId!!,
                                 initialKind = "Sync logs",
+                                fixedKind = true,
                                 onStatus = { status = it }
                             )
                         }
@@ -434,7 +473,7 @@ fun SimpleAdminScreen() {
                         }
                     }
                 }
-                if (tab == 4) {
+                if (tab == 6) {
                     Text("Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -498,7 +537,7 @@ fun SimpleAdminScreen() {
             if (authenticated) {
                 Box(
                     modifier = Modifier.fillMaxWidth()
-                        .then(if (tab == 2) Modifier else Modifier.height(0.dp))
+                        .then(if (tab == 4) Modifier else Modifier.height(0.dp))
                         .clipToBounds()
                 ) {
                     LiveMicrophoneListener(
@@ -510,7 +549,7 @@ fun SimpleAdminScreen() {
                     })
                 }
             }
-            if (tab == 3 || tab == 4 || status.startsWith("Error") || status.startsWith("Account setup")) {
+            if (tab == 5 || tab == 6 || status.startsWith("Error") || status.startsWith("Account setup")) {
                 Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
         }
