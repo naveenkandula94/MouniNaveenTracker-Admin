@@ -44,6 +44,7 @@ internal class LiveAudioPeer(
     private val pendingIce = mutableListOf<IceCandidate>()
     private var remoteReady = false
     @Volatile private var closed = false
+    @Volatile private var playbackMuted = false
     private var lastEnergy: Double? = null
     private var lastSampleDuration: Double? = null
 
@@ -70,7 +71,9 @@ internal class LiveAudioPeer(
                 override fun onRemoveStream(stream: MediaStream?) {}
                 override fun onDataChannel(channel: org.webrtc.DataChannel?) {}
                 override fun onRenegotiationNeeded() {}
-                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
+                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+                    (receiver?.track() as? AudioTrack)?.setEnabled(!playbackMuted)
+                }
             }
         )) { "Could not create WebRTC audio peer" }
         if (broadcaster) {
@@ -192,6 +195,15 @@ internal class LiveAudioPeer(
             })
         } catch (_: Exception) {
             onLevel(0f)
+        }
+    }
+
+    /** Mutes only the Admin phone's received audio, never the remote phone. */
+    fun setPlaybackMuted(muted: Boolean) {
+        playbackMuted = muted
+        if (closed || broadcaster) return
+        peer.receivers.forEach { receiver ->
+            (receiver.track() as? AudioTrack)?.setEnabled(!muted)
         }
     }
 
