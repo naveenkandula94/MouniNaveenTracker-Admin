@@ -150,20 +150,21 @@ fun SimpleAdminScreen() {
                 }
             } else {
                 if (tab == 0) {
-                    Text("Overview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    ElevatedCard(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("${devices.size} linked device(s)", style = MaterialTheme.typography.headlineSmall)
-                            Text(if (devices.isEmpty()) "No linked device yet. Go to Settings to link your own Collector account."
-                                else "View owner-approved call records or join a live audio session started on Collector.")
-                            Button(enabled = !loading, onClick = { run { verifyAndLoad() } }) { Text("Refresh status") }
-                        }
+                    AdminOverview(devices.map { it.id to it.name }) { message ->
+                        status = message
+                    }
+                    Text("Linked devices", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    if (devices.isEmpty()) {
+                        Text("No Collector device linked. Open More → Advanced to link your account.")
                     }
                     devices.forEach { device ->
                         ElevatedCard(Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(14.dp)) {
-                                Text(device.name, style = MaterialTheme.typography.titleMedium)
-                                Text(if (device.enabled) "Enrollment enabled" else "Enrollment disabled", style = MaterialTheme.typography.bodySmall)
+                            Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Text(device.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                    Text(if (device.enabled) "Enrollment active" else "Enrollment disabled",
+                                        style = MaterialTheme.typography.bodySmall)
+                                }
                             }
                         }
                     }
@@ -183,7 +184,7 @@ fun SimpleAdminScreen() {
                     Text("Collector user must explicitly start the session. Admin cannot remotely activate a microphone.", style = MaterialTheme.typography.bodySmall)
                 }
                 if (tab == 4) {
-                    Text("Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("More", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("Signed in: ${auth.currentUser?.email.orEmpty()}")
