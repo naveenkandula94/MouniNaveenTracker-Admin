@@ -118,7 +118,9 @@ private fun AdminScreen() {
             try {
                 block()
             } catch (e: Exception) {
-                status = e.localizedMessage ?: "Operation failed."
+                status = if ((e.localizedMessage ?: "").contains("PERMISSION_DENIED", ignoreCase = true) || (e.localizedMessage ?: "").contains("insufficient permissions", ignoreCase = true)) {
+                    "Firestore access denied. Verify admins/{your Auth UID} has role=admin and publish the updated feature-branch Firestore rules (device list queries need permission). Details: ${e.localizedMessage}"
+                } else e.localizedMessage ?: "Operation failed."
             } finally {
                 busy = false
             }
@@ -246,6 +248,7 @@ private fun AdminScreen() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -255,7 +258,7 @@ private fun AdminScreen() {
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "MOUNI & NAVEEN",
+                        "DEVICE ADMIN",
                         style = MaterialTheme.typography.labelLarge
                     )
 
@@ -761,7 +764,7 @@ private fun AdminScreen() {
                             Text("Administrator: ${auth.currentUser?.email.orEmpty()}")
                             Text("Enrolled devices: ${devices.size}")
                             Text("Allowed automatic uploads: device lock and unlock events only.")
-                            Text("Call history: CSV import, per-upload approval, and device-scoped Firebase storage.")
+                            Text("Call history: user-reviewed device call logs or selected CSV imports, stored per enrolled device.")
                             Text("Sync timing: Android-managed periodic work; not guaranteed instantaneous.")
                             HorizontalDivider()
                             Text("To revoke collection, disable a device on the Devices page. The device owner can also withdraw consent in the Collector.")
@@ -778,7 +781,7 @@ private fun AdminScreen() {
             )
 
             Text(
-                "Privacy: Lock/unlock events sync separately. Call history is stored only after the device owner explicitly imports and approves selected records.",
+                "Privacy: Lock/unlock metadata syncs separately. Call records appear only after the Collector user reviews and approves sharing.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
