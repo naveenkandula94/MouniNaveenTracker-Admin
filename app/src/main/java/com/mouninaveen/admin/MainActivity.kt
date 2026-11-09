@@ -367,7 +367,7 @@ private fun AdminScreen() {
                 }
 
                 ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp) {
-                    listOf("Overview", "Devices", "Lock timeline", "Calls", "Settings").forEachIndexed { index, name ->
+                    listOf("Overview", "Devices", "Lock timeline", "Calls", "Live audio", "Settings").forEachIndexed { index, name ->
                         Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(name) })
                     }
                 }
@@ -752,6 +752,9 @@ private fun AdminScreen() {
                     Text("Only owner-approved imports are shown. No call recordings or message contents.", style = MaterialTheme.typography.labelSmall)
                 }
                 if (selectedTab == 4) {
+                    LiveMicrophoneListener(devices.map { it.id to it.name })
+                }
+                if (selectedTab == 5) {
                     ElevatedCard {
                         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("Settings & Privacy", style = MaterialTheme.typography.headlineMedium)
