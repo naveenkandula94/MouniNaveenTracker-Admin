@@ -132,13 +132,9 @@ fun OwnerBackupScreen(deviceId: String?, deviceName: String, legacy: Boolean = f
             style = MaterialTheme.typography.titleLarge
         )
         Text(
-            if (legacy) "Viewing older Firebase records uploaded by Personal_App before individual phones were tracked. Their original phone cannot be identified reliably."
-            else "View only: Personal_App on $deviceName uploads the call history. Admin_App does not read or back up calls from this phone.",
-            style = MaterialTheme.typography.bodySmall
-        )
-        Text(
-            "Source: Firebase cloud records uploaded by Personal_App. This screen only views and manages those records.",
-            style = MaterialTheme.typography.labelSmall,
+            if (legacy) "Unassigned records from earlier backups"
+            else "Synced from Personal_App · Owner-only Firebase backup",
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
