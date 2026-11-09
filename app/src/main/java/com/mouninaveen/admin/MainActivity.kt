@@ -2,9 +2,11 @@ package com.mouninaveen.admin
 
 import android.content.Intent
 import android.os.Bundle
+import androidx.core.view.WindowCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,10 +34,22 @@ import java.util.UUID
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
 
         setContent {
-            MaterialTheme {
-                AdminScreen()
+            MaterialTheme(colorScheme = lightColorScheme(
+                primary = androidx.compose.ui.graphics.Color(0xFF2858AD),
+                onPrimary = androidx.compose.ui.graphics.Color.White,
+                secondary = androidx.compose.ui.graphics.Color(0xFF177F7C),
+                surface = androidx.compose.ui.graphics.Color(0xFFFFFFFF),
+                background = androidx.compose.ui.graphics.Color(0xFFF4F7FC),
+                onBackground = androidx.compose.ui.graphics.Color(0xFF17213A),
+                onSurface = androidx.compose.ui.graphics.Color(0xFF17213A)
+            )) {
+                SimpleAdminScreen()
             }
         }
     }
@@ -49,6 +63,15 @@ private data class DeviceRow(
     val syncStatus: String,
     val lastSyncMillis: Long,
     val enabled: Boolean
+)
+
+private data class SharedCallRow(
+    val id: String,
+    val number: String,
+    val direction: String,
+    val timestamp: Long,
+    val durationSeconds: Int,
+    val sharedAt: Long
 )
 
 private data class EventRow(
@@ -95,6 +118,9 @@ private fun AdminScreen() {
     var searchText by remember { mutableStateOf("") }
     var eventFilter by remember { mutableStateOf("ALL") }
     var selectedTab by remember { mutableStateOf(0) }
+    var selectedNavigation by remember { mutableIntStateOf(0) }
+    var callDevice by remember { mutableStateOf<DeviceRow?>(null) }
+    var sharedCalls by remember { mutableStateOf(emptyList<SharedCallRow>()) }
 
     fun runTask(block: suspend () -> Unit) {
         scope.launch {
@@ -102,7 +128,9 @@ private fun AdminScreen() {
             try {
                 block()
             } catch (e: Exception) {
-                status = e.localizedMessage ?: "Operation failed."
+                status = if ((e.localizedMessage ?: "").contains("PERMISSION_DENIED", ignoreCase = true) || (e.localizedMessage ?: "").contains("insufficient permissions", ignoreCase = true)) {
+                    "Firestore access denied. Verify admins/{your Auth UID} has role=admin and publish the updated feature-branch Firestore rules (device list queries need permission). Details: ${e.localizedMessage}"
+                } else e.localizedMessage ?: "Operation failed."
             } finally {
                 busy = false
             }
@@ -169,7 +197,7 @@ private fun AdminScreen() {
             .get()
             .await()
 
-        events = snapshot.documents.map { document ->
+        events = snapshot.documents.filter { it.getString("eventType") in listOf("SCREEN_LOCKED", "SCREEN_UNLOCKED") }.map { document ->
             EventRow(
                 id = document.id,
                 app = document.getString("applicationLabel")
@@ -187,7 +215,40 @@ private fun AdminScreen() {
 
         selectedDevice = device
 
-        status = "Loaded ${events.size} usage events. Android may delay or omit some events."
+        status = "Loaded ${events.size} lock/unlock events. Android may delay or omit events."
+    }
+
+    suspend fun loadSharedCalls(device: DeviceRow) {
+        verifyAdmin()
+        val snapshot = db.collection("devices").document(device.id)
+            .collection("callLogs")
+            .orderBy("callTimestamp", Query.Direction.DESCENDING)
+            .limit(200).get().await()
+        sharedCalls = snapshot.documents.map { document ->
+            SharedCallRow(
+                id = document.id,
+                number = document.getString("number") ?: "Unknown",
+                direction = document.getString("direction") ?: "UNKNOWN",
+                timestamp = document.getTimestamp("callTimestamp")?.toDate()?.time ?: 0L,
+                durationSeconds = document.getLong("durationSeconds")?.toInt() ?: 0,
+                sharedAt = document.getTimestamp("sharedAt")?.toDate()?.time ?: 0L
+            )
+        }
+        callDevice = device
+        status = "Loaded ${sharedCalls.size} manually shared call records for ${device.name}."
+    }
+
+    LaunchedEffect(auth.currentUser?.uid) {
+        if (auth.currentUser != null && !signedIn) {
+            try {
+                verifyAdmin()
+                loadDevices()
+                signedIn = true
+                password = ""
+            } catch (e: Exception) {
+                status = "Account setup needed: ${e.localizedMessage}. Check the admins document and published Firestore rules."
+            }
+        }
     }
 
     val visibleEvents = events.filter { event ->
@@ -210,6 +271,7 @@ private fun AdminScreen() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -219,12 +281,12 @@ private fun AdminScreen() {
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "MOUNI & NAVEEN",
+                        "DEVICE ADMIN",
                         style = MaterialTheme.typography.labelLarge
                     )
 
                     Text(
-                        "Admin Dashboard",
+                        "Control Center",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -330,24 +392,52 @@ private fun AdminScreen() {
                     }
                 }
 
-                TabRow(selectedTabIndex = selectedTab) {
-                    listOf("Overview", "Devices", "Activity").forEachIndexed { index, name ->
-                        Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(name) })
+                ScrollableTabRow(selectedTabIndex = selectedNavigation, edgePadding = 0.dp) {
+                    listOf("Home", "Calls", "Live audio", "Settings").forEachIndexed { index, name ->
+                        Tab(
+                            selected = selectedNavigation == index,
+                            onClick = {
+                                selectedNavigation = index
+                                selectedTab = listOf(0, 3, 4, 5)[index]
+                            },
+                            text = { Text(name) }
+                        )
                     }
+                }
+                if (selectedTab == 1 || selectedTab == 2 || selectedTab == 6) {
+                    TextButton(onClick = {
+                        selectedTab = 5
+                        selectedNavigation = 3
+                    }) { Text("Back to Settings") }
                 }
                 if (selectedTab == 0) {
                     val now = System.currentTimeMillis()
                     val recent = devices.count { it.lastSyncMillis > now - 60 * 60 * 1000L }
                     val stopped = devices.count { !it.enabled }
-                    Text("Fleet overview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Security overview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Manage approved devices and review keyguard status history.", style = MaterialTheme.typography.bodyMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         MetricCard("Devices", devices.size.toString(), Modifier.weight(1f))
                         MetricCard("Recent sync", recent.toString(), Modifier.weight(1f))
                         MetricCard("Stopped", stopped.toString(), Modifier.weight(1f))
                     }
-                    Text("Recent sync means a successful report in the past hour, not live device presence.", style = MaterialTheme.typography.bodySmall)
+                    Text("Recent sync means a report in the past hour, not live device presence.", style = MaterialTheme.typography.bodySmall)
+                    ElevatedCard {
+                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Lock / unlock activity", style = MaterialTheme.typography.titleMedium)
+                            Text("Select a device under Devices to see event history and timestamps.")
+                            Button(onClick = { selectedTab = 3; selectedNavigation = 1 }) { Text("View shared call history") }
+                        }
+                    }
+                    ElevatedCard {
+                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Call history", style = MaterialTheme.typography.titleMedium)
+                            Text("View records explicitly imported and approved in the Collector. No automatic call-history extraction.")
+                            OutlinedButton(onClick = { selectedTab = 3; selectedNavigation = 1 }) { Text("View calls") }
+                        }
+                    }
                 }
-                if (selectedTab != 2) {
+                if (selectedTab == 1) {
                 Card(
                     shape = RoundedCornerShape(18.dp)
                 ) {
@@ -443,6 +533,7 @@ private fun AdminScreen() {
                                     .clickable {
                                         runTask {
                                             loadEvents(device)
+                                            selectedTab = 2
                                         }
                                     },
                                 shape = RoundedCornerShape(16.dp)
@@ -485,7 +576,7 @@ private fun AdminScreen() {
                                         }
                                     }) { Text(if (device.enabled) "Disable enrollment" else "Enable enrollment") }
                                     Text(
-                                        "Tap to view activity",
+                                        "Tap to view lock/unlock timeline",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -496,7 +587,16 @@ private fun AdminScreen() {
                 }
 
                 }
-                if (selectedTab != 1) selectedDevice?.let { device ->
+                if (selectedTab == 2 && selectedDevice == null) {
+                    ElevatedCard {
+                        Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                            Text("No device selected", style = MaterialTheme.typography.titleLarge)
+                            Text("Open Devices and tap a device to view its lock and unlock history.")
+                            Button(onClick = { selectedTab = 1 }) { Text("Choose device") }
+                        }
+                    }
+                }
+                if (selectedTab == 2) selectedDevice?.let { device ->
 
                     HorizontalDivider()
 
@@ -505,7 +605,7 @@ private fun AdminScreen() {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "Usage Activity",
+                                "Lock / Unlock Timeline",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -519,7 +619,7 @@ private fun AdminScreen() {
                         TextButton(
                             onClick = {
                                 val csv = buildString {
-                                    append("Timestamp,Event,Application,Package\n")
+                                    append("Timestamp,Event\n")
 
                                     events.forEach { event ->
                                         append(
@@ -528,12 +628,7 @@ private fun AdminScreen() {
                                         append(
                                             "\"${csvEscape(event.eventType)}\","
                                         )
-                                        append(
-                                            "\"${csvEscape(event.app)}\","
-                                        )
-                                        append(
-                                            "\"${csvEscape(event.packageName)}\"\n"
-                                        )
+                                        append("\n")
                                     }
                                 }
 
@@ -543,7 +638,7 @@ private fun AdminScreen() {
                                     type = "text/csv"
                                     putExtra(
                                         Intent.EXTRA_SUBJECT,
-                                        "Usage activity - ${device.name}"
+                                        "Lock timeline - ${device.name}"
                                     )
                                     putExtra(
                                         Intent.EXTRA_TEXT,
@@ -554,7 +649,7 @@ private fun AdminScreen() {
                                 context.startActivity(
                                     Intent.createChooser(
                                         intent,
-                                        "Export usage CSV"
+                                        "Export lock events CSV"
                                     )
                                 )
                             }
@@ -563,21 +658,13 @@ private fun AdminScreen() {
                         }
                     }
 
-                    OutlinedTextField(
-                        value = searchText,
-                        onValueChange = { searchText = it },
-                        label = { Text("Search app or package") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
 
                     Row(
                         modifier = Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         listOf(
-                            "ALL", "APP_FOREGROUND", "APP_BACKGROUND",
-                            "SCREEN_LOCKED", "SCREEN_UNLOCKED"
+                            "ALL", "SCREEN_LOCKED", "SCREEN_UNLOCKED"
                         ).forEach { type ->
 
                             FilterChip(
@@ -613,14 +700,10 @@ private fun AdminScreen() {
                                     .padding(vertical = 6.dp)
                             ) {
                                 Text(
-                                    "${event.eventType.replace('_', ' ')} • ${event.app}",
+                                    if (event.eventType == "SCREEN_LOCKED") "Locked" else "Unlocked",
                                     fontWeight = FontWeight.Medium
                                 )
 
-                                Text(
-                                    event.packageName,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
 
                                 Text(
                                     if (event.timestamp > 0L)
@@ -634,6 +717,129 @@ private fun AdminScreen() {
                         }
                     }
                 }
+                if (selectedTab == 3) {
+                    Text("Call History", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text("User-approved call records stored in Firebase", style = MaterialTheme.typography.bodySmall)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        devices.forEach { device ->
+                            FilterChip(
+                                selected = callDevice?.id == device.id,
+                                onClick = { runTask { loadSharedCalls(device) } },
+                                label = { Text(device.name) }
+                            )
+                        }
+                    }
+                    if (devices.isEmpty()) {
+                        Text("No enrolled devices. Add a collector from Devices.")
+                    } else if (callDevice == null) {
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(20.dp)) {
+                                Text("Select a device", style = MaterialTheme.typography.titleMedium)
+                                Text("Only records explicitly selected and approved in the Collector are displayed here.")
+                            }
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "${sharedCalls.size} shared calls • ${callDevice?.name.orEmpty()}",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            OutlinedButton(
+                                enabled = !busy,
+                                onClick = { callDevice?.let { selected -> runTask { loadSharedCalls(selected) } } }
+                            ) { Text("Refresh") }
+                        }
+                        if (sharedCalls.isEmpty()) {
+                            ElevatedCard(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(20.dp)) {
+                                    Text("No call records shared", style = MaterialTheme.typography.titleMedium)
+                                    Text("On the Collector, choose a CSV, review the call details, and approve uploading selected records.")
+                                }
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(sharedCalls, key = { it.id }) { record ->
+                                    ElevatedCard(Modifier.fillMaxWidth()) {
+                                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(record.direction.replace('_', ' '), style = MaterialTheme.typography.labelLarge)
+                                                Spacer(Modifier.weight(1f))
+                                                Text("${record.durationSeconds}s", style = MaterialTheme.typography.bodyMedium)
+                                            }
+                                            Text(record.number, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                if (record.timestamp > 0L) formatDate(record.timestamp) else "Unknown date",
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                            Text(
+                                                "Shared: " + if (record.sharedAt > 0L) formatDate(record.sharedAt) else "Pending server timestamp",
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Text("Only owner-approved imports are shown. No call recordings or message contents.", style = MaterialTheme.typography.labelSmall)
+                }
+                if (selectedTab == 4) {
+                    Text("Live audio", style = MaterialTheme.typography.titleLarge)
+                }
+                if (selectedTab == 6) {
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Connection diagnostics", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text("Authentication: ${if (auth.currentUser != null) "Signed in" else "Signed out"}")
+                            Text("Account UID: ${auth.currentUser?.uid.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+                            Text("Enrolled devices: ${devices.size}")
+                            Text("Latest result: $status")
+                            Button(enabled = !busy, onClick = {
+                                runTask {
+                                    verifyAdmin()
+                                    loadDevices()
+                                    status = "Admin authorization and device list query both succeeded."
+                                }
+                            }) { Text("Test Firebase permissions") }
+                            Text("If PERMISSION_DENIED persists: check Firestore admins/{UID} role=admin and publish the latest firebase/firestore.rules from the feature branch.", style = MaterialTheme.typography.bodySmall)
+                            Text("Audio connection failures: verify Collector started sharing and keep both phones open. STUN-only connections may require a TURN relay.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                if (selectedTab == 5) {
+                    ElevatedCard {
+                        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Settings & Privacy", style = MaterialTheme.typography.headlineMedium)
+                            Text("Administrator: ${auth.currentUser?.email.orEmpty()}")
+                            Text("Enrolled devices: ${devices.size}")
+                            Text("Allowed automatic uploads: device lock and unlock events only.")
+                            Text("Call history: user-reviewed device call logs or selected CSV imports, stored per enrolled device.")
+                            Text("Sync timing: Android-managed periodic work; not guaranteed instantaneous.")
+                            HorizontalDivider()
+                            Text("To revoke collection, disable a device on the Devices page. The device owner can also withdraw consent in the Collector.")
+                            OutlinedButton(onClick = { runTask { loadDevices() } }, enabled = !busy) { Text("Refresh devices") }
+                            OutlinedButton(onClick = { selectedTab = 6 }) { Text("Diagnostics & permission test") }
+                            TextButton(onClick = { selectedTab = 1 }) { Text("Device setup / pairing (advanced)") }
+                            TextButton(onClick = { selectedTab = 2 }) { Text("Lock/unlock timeline") }
+                        }
+                    }
+                }
+            }
+
+            // Preserve the WebRTC listening peer when moving to another Admin tab.
+            Box(
+                modifier = Modifier.fillMaxWidth()
+                    .then(if (selectedTab == 4) Modifier else Modifier.height(0.dp))
+                    .clipToBounds()
+            ) {
+                LiveMicrophoneListener(devices.map { it.id to it.name })
             }
 
             Text(
@@ -643,10 +849,7 @@ private fun AdminScreen() {
             )
 
             Text(
-                "Privacy: Displays permitted usage-event metadata only. " +
-                    "No message contents, calls, photos, microphone, camera, " +
-                    "or screen recordings are accessed. Android may delay " +
-                    "or omit usage events.",
+                "Privacy: Lock/unlock metadata syncs separately. Call records appear only after the Collector user reviews and approves sharing.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
