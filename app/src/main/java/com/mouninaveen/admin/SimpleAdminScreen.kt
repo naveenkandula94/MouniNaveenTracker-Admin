@@ -38,6 +38,7 @@ fun SimpleAdminScreen() {
     val db = remember { FirebaseFirestore.getInstance() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val phonePreference = remember { context.getSharedPreferences("admin_selected_phone", 0) }
     var authenticated by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf(auth.currentUser?.email.orEmpty()) }
     var password by remember { mutableStateOf("") }
@@ -76,7 +77,9 @@ fun SimpleAdminScreen() {
             )
         }.sortedWith(compareByDescending<SimpleDevice> { it.lastSyncMillis }.thenBy { it.name })
         if (selectedDeviceId == null || devices.none { it.id == selectedDeviceId }) {
-            selectedDeviceId = devices.firstOrNull()?.id
+            val saved = phonePreference.getString(uid, null)
+            selectedDeviceId = devices.firstOrNull { it.id == saved }?.id
+                ?: devices.firstOrNull()?.id
         }
         authenticated = true
         status = if (devices.isEmpty()) "Account ready. Link your own Collector under Settings." else "Connected to Firebase."
@@ -125,12 +128,24 @@ fun SimpleAdminScreen() {
                         )
                         if (selectedDeviceId == null ||
                             devices.none { it.id == selectedDeviceId }) {
-                            selectedDeviceId = devices.firstOrNull()?.id
+                            val saved = phonePreference.getString(uid, null)
+                            selectedDeviceId = devices.firstOrNull { it.id == saved }?.id
+                                ?: devices.firstOrNull()?.id
                         }
                     }
                 }
             onDispose { subscription.remove() }
         } else onDispose { }
+    }
+
+    // Remember the explicitly chosen phone per Firebase UID across app launches.
+    // This avoids silently switching live audio to whichever phone sorts first.
+    LaunchedEffect(authenticated, selectedDeviceId) {
+        val owner = auth.currentUser?.uid
+        val id = selectedDeviceId
+        if (authenticated && owner != null && id != null) {
+            phonePreference.edit().putString(owner, id).apply()
+        }
     }
 
     LaunchedEffect(auth.currentUser?.uid) {
@@ -256,8 +271,13 @@ fun SimpleAdminScreen() {
                     if (chosen != null) {
                         AdminStatusDot(
                             chosen.lastSyncMillis > 0L &&
-                                System.currentTimeMillis() - chosen.lastSyncMillis <= 120_000L
+                                System.currentTimeMillis() - chosen.lastSyncMillis <= 120_000L,
+                            hasEverSynced = chosen.lastSyncMillis > 0L
                         )
+                        Text("Phone ID: ${chosen.id.take(8)}… · ${chosen.lastSyncStatus}",
+                            style = MaterialTheme.typography.bodySmall)
+                        Text("Select the same named phone in Personal_App > Account.",
+                            style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 if (tab == 0) {
@@ -324,7 +344,8 @@ fun SimpleAdminScreen() {
                                         Text(if (selectedDeviceId == device.id) "Selected" else "View")
                                     }
                                 }
-                                AdminStatusDot(recentCheck)
+                                AdminStatusDot(recentCheck,
+                                    hasEverSynced = device.lastSyncMillis > 0L)
                                 Text(if (device.lastSyncMillis > 0L)
                                     SimpleDateFormat("dd MMM, HH:mm:ss", Locale.getDefault())
                                         .format(Date(device.lastSyncMillis))
