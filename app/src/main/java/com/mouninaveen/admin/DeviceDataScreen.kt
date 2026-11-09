@@ -24,11 +24,16 @@ private data class ActivityRecord(
 )
 
 @Composable
-fun DeviceDataScreen(deviceId: String, onStatus: (String) -> Unit) {
+fun DeviceDataScreen(
+    deviceId: String,
+    initialKind: String = "Lock/unlock",
+    fixedKind: Boolean = false,
+    onStatus: (String) -> Unit
+) {
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val scope = rememberCoroutineScope()
-    var kind by remember(deviceId) { mutableStateOf("Lock/unlock") }
+    var kind by remember(deviceId, initialKind) { mutableStateOf(initialKind) }
     var range by remember { mutableStateOf("7 days") }
     var records by remember(deviceId, kind) { mutableStateOf(emptyList<ActivityRecord>()) }
     var selected by remember(deviceId, kind) { mutableStateOf(emptySet<String>()) }
@@ -38,8 +43,16 @@ fun DeviceDataScreen(deviceId: String, onStatus: (String) -> Unit) {
     var confirm by remember { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
 
-    val collectionName = if (kind == "Lock/unlock") "usageEvents" else "liveAudio"
-    val timeField = if (kind == "Lock/unlock") "eventTimestamp" else "createdAt"
+    val collectionName = when (kind) {
+        "Lock/unlock" -> "usageEvents"
+        "Audio sessions" -> "liveAudio"
+        else -> "syncLogs"
+    }
+    val timeField = when (kind) {
+        "Lock/unlock" -> "eventTimestamp"
+        "Audio sessions" -> "createdAt"
+        else -> "timestamp"
+    }
 
     fun query(): Query {
         var query: Query = db.collection("devices").document(deviceId).collection(collectionName)
@@ -70,10 +83,15 @@ fun DeviceDataScreen(deviceId: String, onStatus: (String) -> Unit) {
                 val docs = request.get().await().documents
                 val parsed = docs.map { d ->
                     ActivityRecord(d.id,
-                        if (kind == "Lock/unlock") d.getString("eventType") ?: "EVENT" else d.getString("status") ?: "SESSION",
+                        if (kind == "Lock/unlock") d.getString("eventType") ?: "EVENT"
+                        else if (kind == "Audio sessions") d.getString("status") ?: "SESSION"
+                        else d.getString("eventType") ?: "SYNC",
                         d.getTimestamp(timeField)?.toDate()?.time ?: 0L,
-                        if (kind == "Lock/unlock") d.getString("applicationLabel") ?: "Screen state"
-                        else "Microphone connection metadata only (no audio recording)"
+                        when (kind) {
+                            "Lock/unlock" -> d.getString("applicationLabel") ?: "Screen state"
+                            "Audio sessions" -> "Microphone connection metadata only (no recording)"
+                            else -> "${d.getString("status") ?: "UNKNOWN"} · ${d.getLong("count") ?: 0L} new calls in backup"
+                        }
                     )
                 }
                 records = if (more) records + parsed else parsed
@@ -95,16 +113,35 @@ fun DeviceDataScreen(deviceId: String, onStatus: (String) -> Unit) {
         reload()
     }
 
+    // Firestore live subscription refreshes the newest records when a phone uploads.
+    // It is removed automatically when the tab closes or the device changes.
+    DisposableEffect(deviceId, kind, range) {
+        val subscription = query().limit(1).addSnapshotListener { _, error ->
+            if (error != null) onStatus("Live event updates unavailable: ${error.localizedMessage}")
+            else reload()
+        }
+        onDispose { subscription.remove() }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Device activity", style = MaterialTheme.typography.titleLarge)
+        Text(
+            when (kind) {
+                "Sync logs" -> "Sync activity · newest first"
+                "Lock/unlock" -> "Screen lock history · newest first"
+                else -> "Audio sessions · newest first"
+            },
+            style = MaterialTheme.typography.titleLarge
+        )
         Text("View and manage device event metadata in Firebase.", style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Lock/unlock", "Audio sessions").forEach { value ->
-                FilterChip(
-                    selected = kind == value,
-                    onClick = { kind = value },
-                    label = { Text(value) }
-                )
+        if (!fixedKind) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Lock/unlock", "Audio sessions", "Sync logs").forEach { value ->
+                    FilterChip(
+                        selected = kind == value,
+                        onClick = { kind = value },
+                        label = { Text(value) }
+                    )
+                }
             }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
