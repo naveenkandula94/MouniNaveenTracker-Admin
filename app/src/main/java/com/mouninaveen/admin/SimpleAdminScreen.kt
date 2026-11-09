@@ -169,11 +169,11 @@ fun SimpleAdminScreen() {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
-            Surface(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars), color = Color(0xFFE5EFFF), tonalElevation = 2.dp) {
+            Surface(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars), color = Color(0xFFE3EEFF), tonalElevation = 2.dp) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
-                    Text("ADMIN_APP  •  CONTROL CENTER", style = MaterialTheme.typography.labelMedium, color = Color(0xFF2955A5))
-                    Text("My devices", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text(if (authenticated) "Viewer only • ${devices.size} linked phone(s)" else "Secure sign in", style = MaterialTheme.typography.bodySmall)
+                    Text("ADMIN_APP  /  DASHBOARD", style = MaterialTheme.typography.labelMedium, color = Color(0xFF2955A5), fontWeight = FontWeight.Bold)
+                    Text("Device overview", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(if (authenticated) "${devices.size} linked phone(s)" else "Secure sign in", style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
@@ -228,7 +228,7 @@ fun SimpleAdminScreen() {
             } else {
                 if (devices.isNotEmpty()) {
                     val chosen = devices.firstOrNull { it.id == selectedDeviceId }
-                    Text("Selected phone", style = MaterialTheme.typography.labelMedium)
+                    Text("SELECTED DEVICE", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = Color(0xFF315EA1))
                     Box {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth(),
@@ -254,74 +254,104 @@ fun SimpleAdminScreen() {
                         }
                     }
                     if (chosen != null) {
-                        Text(
-                            "${chosen.name} • ${if (chosen.enabled) "Enabled" else "Disabled"} • " +
-                                "${if (chosen.lastSyncMillis == 0L) "No lock-event sync yet" else "Last lock sync " +
-                                SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(chosen.lastSyncMillis))}",
-                            style = MaterialTheme.typography.bodySmall
+                        AdminStatusDot(
+                            chosen.lastSyncMillis > 0L &&
+                                System.currentTimeMillis() - chosen.lastSyncMillis <= 120_000L
                         )
                     }
                 }
                 if (tab == 0) {
-                    Text("Overview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    ElevatedCard(Modifier.fillMaxWidth(),
-                        colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFE4F5F0))) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("${devices.size} linked device(s)", style = MaterialTheme.typography.headlineSmall)
-                            Text(if (devices.isEmpty()) "Add your phones under Settings, then choose the phone in the selector."
-                                else "Choose a phone above to view its call history, lock events, session metadata and backup status.")
-                            Button(enabled = !loading, onClick = { run { verifyAndLoad() } }) { Text("Refresh status") }
-                        }
+                    Text("Overview", style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold)
+                    val recent = devices.count {
+                        it.lastSyncMillis > 0L &&
+                            System.currentTimeMillis() - it.lastSyncMillis <= 120_000L
                     }
-                    devices.forEach { device ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AdminMetricTile(
+                            title = "Linked phones",
+                            value = "${devices.size}",
+                            fill = Color(0xFFE4EDFF),
+                            modifier = Modifier.weight(1f)
+                        )
+                        AdminMetricTile(
+                            title = "Checked recently",
+                            value = "$recent",
+                            fill = Color(0xFFDDF5EB),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("Devices", style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        TextButton(enabled = !loading, onClick = {
+                            run { verifyAndLoad() }
+                        }) { Text("Refresh") }
+                    }
+                    if (devices.isEmpty()) {
                         ElevatedCard(Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(14.dp)) {
-                                Text(device.name, style = MaterialTheme.typography.titleMedium)
-                                Text(if (device.enabled) "Enrollment enabled" else "Enrollment disabled", style = MaterialTheme.typography.bodySmall)
-                                Text(
-                                    if (device.lastSyncMillis == 0L) "No recent Personal_App lock sync"
-                                    else "Last check: ${SimpleDateFormat("dd MMM HH:mm:ss", Locale.getDefault()).format(Date(device.lastSyncMillis))}",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Text(
-                                    if (System.currentTimeMillis() - device.lastSyncMillis <= 120_000L) "● Checked recently"
-                                    else "○ Not recently checked (phone may be in background)",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (System.currentTimeMillis() - device.lastSyncMillis <= 120_000L)
-                                        Color(0xFF14836A) else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            Column(Modifier.padding(18.dp)) {
+                                Text("No phones linked")
+                                TextButton(onClick = { tab = 6; showSetup = true }) {
+                                    Text("Add phone")
+                                }
                             }
                         }
                     }
-                    if (selectedDeviceId != null) {
-                        OutlinedButton(
+                    devices.forEach { device ->
+                        val recentCheck = device.lastSyncMillis > 0L &&
+                            System.currentTimeMillis() - device.lastSyncMillis <= 120_000L
+                        Card(
                             modifier = Modifier.fillMaxWidth(),
-                            onClick = { showDeviceActivity = !showDeviceActivity }
-                        ) { Text(if (showDeviceActivity) "Hide device activity" else "Show lock/unlock and audio-session data") }
-                        if (showDeviceActivity) {
-                            DeviceDataScreen(deviceId = selectedDeviceId!!, onStatus = { status = it })
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (selectedDeviceId == device.id)
+                                    Color(0xFFF0F0FF) else Color.White
+                            )
+                        ) {
+                            Column(Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(device.name, style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.SemiBold)
+                                        Text(if (device.enabled) "Enabled" else "Disabled",
+                                            style = MaterialTheme.typography.labelMedium)
+                                    }
+                                    TextButton(onClick = { selectedDeviceId = device.id }) {
+                                        Text(if (selectedDeviceId == device.id) "Selected" else "View")
+                                    }
+                                }
+                                AdminStatusDot(recentCheck)
+                                Text(if (device.lastSyncMillis > 0L)
+                                    SimpleDateFormat("dd MMM, HH:mm:ss", Locale.getDefault())
+                                        .format(Date(device.lastSyncMillis))
+                                    else "No sync yet",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
-
                 }
                 if (tab == 1) {
-                    Text("Personal_App call history", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Admin_App displays Firebase records collected by Personal_App. It does not read call logs or back up data from the Admin phone.", style = MaterialTheme.typography.bodySmall)
+                    Text("Call history", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = callsSource == "private",
                             onClick = { callsSource = "private" },
-                            label = { Text("Personal_App backups") }
+                            label = { Text("Backups") }
                         )
                         FilterChip(
                             selected = callsSource == "shared",
                             onClick = { callsSource = "shared" },
-                            label = { Text("Shared records") }
+                            label = { Text("Shared") }
                         )
                         FilterChip(
                             selected = callsSource == "legacy",
                             onClick = { callsSource = "legacy" },
-                            label = { Text("Earlier records") }
+                            label = { Text("Earlier") }
                         )
                     }
                     if (callsSource == "private" || callsSource == "legacy") {
@@ -345,7 +375,7 @@ fun SimpleAdminScreen() {
                             }
                         }
                     } else {
-                    Text("Only records separately shared with the enrolled Admin are listed here.", style = MaterialTheme.typography.bodySmall)
+                    
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("${calls.size} shared calls", modifier = Modifier.weight(1f))
@@ -477,7 +507,7 @@ fun SimpleAdminScreen() {
                     }
                 }
                 if (tab == 3) {
-                    Text("Lock / unlock", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    
                     if (selectedDeviceId == null) {
                         Text("Select a linked phone from the dropdown above to view its screen state history.")
                     } else {
@@ -492,7 +522,7 @@ fun SimpleAdminScreen() {
                     }
                 }
                 if (tab == 4) {
-                    Text("Live microphone", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Live audio", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text("Listen to a live session started by the selected phone's owner. Admin cannot activate a microphone remotely.", style = MaterialTheme.typography.bodySmall)
                 }
                 if (tab == 5) {
@@ -507,7 +537,7 @@ fun SimpleAdminScreen() {
                         }
                     }
                     Text("Admin app logs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Local connection and permission diagnostics for Admin_App. Remote sync logs above belong to the selected phone.",
+                    Text("Admin diagnostics",
                         style = MaterialTheme.typography.bodySmall)
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -540,7 +570,7 @@ fun SimpleAdminScreen() {
                                 Text(if (showSetup) "Hide device linking" else "Add or manage phones")
                             }
                             if (showSetup) {
-                                Text("Add a new phone. Install Personal_App there, sign in, then choose this named enrollment in Account.")
+                                
                                 OutlinedTextField(
                                     value = newPhoneName, onValueChange = { newPhoneName = it.take(45) },
                                     label = { Text("Phone name (for example Samsung S24)") },
@@ -570,7 +600,7 @@ fun SimpleAdminScreen() {
                                         }
                                     }
                                 ) { Text("Add phone") }
-                                Text("For different Firebase UIDs, Admin sees enrolled events and separately shared calls; private phone backup remains restricted to its owner UID.",
+                                Text("Other Firebase UIDs retain their private backup access.",
                                     style = MaterialTheme.typography.bodySmall)
                             }
                             OutlinedButton(onClick = {
