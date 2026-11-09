@@ -31,7 +31,7 @@ private class ListeningSession(
 }
 
 @Composable
-fun LiveMicrophoneListener(devices: List<Pair<String, String>>) {
+fun LiveMicrophoneListener(devices: List<Pair<String, String>>, onStatus: (String) -> Unit = {}) {
     val context = LocalContext.current
     val db = remember { FirebaseFirestore.getInstance() }
     val auth = remember { FirebaseAuth.getInstance() }
@@ -45,6 +45,49 @@ fun LiveMicrophoneListener(devices: List<Pair<String, String>>) {
 
     // Dispose only the session owned by this effect instance. Reading mutable
     // listening state in onDispose closed a newly connected WebRTC peer.
+    LaunchedEffect(devices) {
+        if (devices.size == 1 && deviceId != devices.first().first) {
+            deviceId = devices.first().first
+            status = "Checking for a Collector live-audio session."
+        }
+    }
+    LaunchedEffect(status) {
+        onStatus(status)
+    }
+    // Subscribe to active offers rather than requiring the user to refresh repeatedly.
+    DisposableEffect(deviceId) {
+        val id = deviceId
+        if (id == null) {
+            onDispose { }
+        } else {
+            val subscription = db.collection("devices").document(id)
+                .collection("liveAudio")
+                .orderBy("createdAt", Query.Direction.DESCENDING)
+                .limit(8)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        status = "Live-session query failed: ${error.localizedMessage}"
+                    } else if (listening == null) {
+                        val doc = snapshot?.documents?.firstOrNull {
+                            it.getString("status") == "OFFERED" &&
+                                (System.currentTimeMillis() -
+                                    (it.getTimestamp("createdAt")?.toDate()?.time ?: 0L) < 10 * 60_000L)
+                        }
+                        if (doc != null) {
+                            availableRef = doc.reference
+                            availableId = doc.id
+                            status = "Collector microphone is ready. Tap Listen now."
+                        } else {
+                            availableRef = null
+                            availableId = null
+                            status = "No live microphone session. Start one on Collector first."
+                        }
+                    }
+                }
+            onDispose { subscription.remove() }
+        }
+    }
+
     DisposableEffect(listening) {
         val currentSession = listening
         onDispose { currentSession?.stop() }
@@ -52,8 +95,8 @@ fun LiveMicrophoneListener(devices: List<Pair<String, String>>) {
 
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Live Microphone", style = MaterialTheme.typography.headlineSmall)
-            Text("Listen only after the Collector user has started an approved live session. No remote microphone activation or recordings.")
+            Text("Listen live", style = MaterialTheme.typography.titleLarge)
+            Text("Connect after the Collector user starts audio. This app cannot turn on their microphone.")
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 devices.forEach { item ->
                     FilterChip(
@@ -100,7 +143,7 @@ fun LiveMicrophoneListener(devices: List<Pair<String, String>>) {
                         } finally { busy = false }
                     }
                 }
-            ) { Text(if (busy) "Checking…" else "Find live session") }
+            ) { Text(if (busy) "Checking…" else "Refresh session") }
             if (availableId != null && listening == null) {
                 Button(enabled = !busy, onClick = {
                     val ref = availableRef ?: return@Button
@@ -167,7 +210,7 @@ fun LiveMicrophoneListener(devices: List<Pair<String, String>>) {
                 }) { Text("Disconnect") }
             }
             Text(status)
-            Text("Keep both apps open during this version of live audio. A TURN relay may be required on some mobile networks.", style = MaterialTheme.typography.bodySmall)
+            Text("Keep both apps open. If connectivity fails on mobile data, a TURN relay may be required.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
