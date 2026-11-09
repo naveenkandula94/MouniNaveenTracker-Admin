@@ -57,6 +57,73 @@ fun LiveMicrophoneListener(
     var audioLevel by remember { mutableFloatStateOf(0f) }
     var playbackMuted by remember { mutableStateOf(false) }
     var speakerEnabled by remember { mutableStateOf(true) }
+    var reconnectUntil by remember { mutableLongStateOf(0L) }
+    var joinedSessionId by remember { mutableStateOf<String?>(null) }
+
+    fun joinSession(ref: DocumentReference, automatic: Boolean) {
+        if (busy || listening != null) return
+        if (!automatic) reconnectUntil = System.currentTimeMillis() + 120_000L
+        busy = true
+
+                    scope.launch {
+                        var newPeer: LiveAudioPeer? = null
+                        try {
+                            val snapshot = ref.get().await()
+                            check(snapshot.getString("status") == "OFFERED") { "The microphone session is not available." }
+                            val offer = snapshot.getString("offer") ?: error("The offer has not arrived.")
+                            val peer = LiveAudioPeer(
+                                context, false,
+                                onIce = { candidate ->
+                                    ref.collection("listenerIce").add(mapOf(
+                                        "sdp" to candidate.sdp,
+                                        "mid" to (candidate.sdpMid ?: ""),
+                                        "line" to candidate.sdpMLineIndex
+                                    )).addOnFailureListener { error ->
+                                        (context as android.app.Activity).runOnUiThread {
+                                            status = "ICE upload failed: ${error.localizedMessage}"
+                                        }
+                                    }
+                                },
+                                onStatus = { message ->
+                                    (context as android.app.Activity).runOnUiThread { status = "Audio: $message" }
+                                }
+                            )
+                            newPeer = peer
+                            val ice = ref.collection("publisherIce").addSnapshotListener { events, _ ->
+                                events?.documentChanges?.forEach { change ->
+                                    if (change.type == DocumentChange.Type.ADDED) {
+                                        val d = change.document
+                                        val sdp = d.getString("sdp") ?: return@forEach
+                                        peer.addRemoteCandidate(IceCandidate(d.getString("mid") ?: "", d.getLong("line")?.toInt() ?: 0, sdp))
+                                    }
+                                }
+                            }
+                            val sessionMonitor = ref.addSnapshotListener { doc, _ ->
+                                if (doc?.getString("status") == "ENDED" && joinedSessionId == ref.id) {
+                                    listening?.stop()
+                                    listening = null
+                                    joinedSessionId = null
+                                    status = "Stream interrupted; checking for a new owner-approved session."
+                                }
+                            }
+                            listening = ListeningSession(peer, listOf(ice, sessionMonitor))
+                            joinedSessionId = ref.id
+                            peer.receiveOffer(offer) { answer ->
+                                ref.update("answer", answer, "status", "ANSWERED").addOnFailureListener { error ->
+                                    (context as android.app.Activity).runOnUiThread { status = "Could not publish WebRTC answer: ${error.localizedMessage}" }
+                                }
+                            }
+                            status = "Connecting to Collector live microphone…"
+                        } catch (e: Exception) {
+                            newPeer?.close()
+                            listening?.stop()
+                            listening = null
+                            joinedSessionId = null
+                            status = "Listening failed: ${e.localizedMessage}"
+                        } finally { busy = false }
+                    }
+
+    }
 
     // Dispose only the session owned by this effect instance. Reading mutable
     // listening state in onDispose closed a newly connected WebRTC peer.
@@ -66,6 +133,8 @@ fun LiveMicrophoneListener(
         if (deviceId != target) {
             listening?.stop()
             listening = null
+            reconnectUntil = 0L
+            joinedSessionId = null
             availableRef = null
             availableId = null
             deviceId = target
@@ -76,7 +145,7 @@ fun LiveMicrophoneListener(
         onStatus(status)
     }
     // Subscribe to active offers rather than requiring the user to refresh repeatedly.
-    DisposableEffect(deviceId) {
+    DisposableEffect(deviceId, reconnectUntil) {
         val id = deviceId
         if (id == null) {
             onDispose { }
@@ -97,7 +166,10 @@ fun LiveMicrophoneListener(
                         if (doc != null) {
                             availableRef = doc.reference
                             availableId = doc.id
-                            status = "Collector microphone is ready. Tap Listen now."
+                            status = "Personal_App microphone is ready. Tap Listen now."
+                            if (System.currentTimeMillis() < reconnectUntil && !busy) {
+                                joinSession(doc.reference, automatic = true)
+                            }
                         } else {
                             availableRef = null
                             availableId = null
@@ -202,63 +274,15 @@ fun LiveMicrophoneListener(
             if (availableId != null && listening == null) {
                 Button(enabled = !busy, onClick = {
                     val ref = availableRef ?: return@Button
-                    busy = true
-                    scope.launch {
-                        var newPeer: LiveAudioPeer? = null
-                        try {
-                            val snapshot = ref.get().await()
-                            check(snapshot.getString("status") == "OFFERED") { "The microphone session is not available." }
-                            val offer = snapshot.getString("offer") ?: error("The offer has not arrived.")
-                            val peer = LiveAudioPeer(
-                                context, false,
-                                onIce = { candidate ->
-                                    ref.collection("listenerIce").add(mapOf(
-                                        "sdp" to candidate.sdp,
-                                        "mid" to (candidate.sdpMid ?: ""),
-                                        "line" to candidate.sdpMLineIndex
-                                    )).addOnFailureListener { error ->
-                                        (context as android.app.Activity).runOnUiThread {
-                                            status = "ICE upload failed: ${error.localizedMessage}"
-                                        }
-                                    }
-                                },
-                                onStatus = { message ->
-                                    (context as android.app.Activity).runOnUiThread { status = "Audio: $message" }
-                                }
-                            )
-                            newPeer = peer
-                            val ice = ref.collection("publisherIce").addSnapshotListener { events, _ ->
-                                events?.documentChanges?.forEach { change ->
-                                    if (change.type == DocumentChange.Type.ADDED) {
-                                        val d = change.document
-                                        val sdp = d.getString("sdp") ?: return@forEach
-                                        peer.addRemoteCandidate(IceCandidate(d.getString("mid") ?: "", d.getLong("line")?.toInt() ?: 0, sdp))
-                                    }
-                                }
-                            }
-                            val sessionMonitor = ref.addSnapshotListener { doc, _ ->
-                                if (doc?.getString("status") == "ENDED") status = "Collector stopped sharing. Tap Disconnect."
-                            }
-                            listening = ListeningSession(peer, listOf(ice, sessionMonitor))
-                            peer.receiveOffer(offer) { answer ->
-                                ref.update("answer", answer, "status", "ANSWERED").addOnFailureListener { error ->
-                                    (context as android.app.Activity).runOnUiThread { status = "Could not publish WebRTC answer: ${error.localizedMessage}" }
-                                }
-                            }
-                            status = "Connecting to Collector live microphone…"
-                        } catch (e: Exception) {
-                            newPeer?.close()
-                            listening?.stop()
-                            listening = null
-                            status = "Listening failed: ${e.localizedMessage}"
-                        } finally { busy = false }
-                    }
+                    joinSession(ref, automatic = false)
                 }) { Text("Listen now") }
             }
             if (listening != null) {
                 Button(onClick = {
                     listening?.stop()
                     listening = null
+                    reconnectUntil = 0L
+                    joinedSessionId = null
                     availableRef = null
                     availableId = null
                     status = "Disconnected from audio."
@@ -307,7 +331,7 @@ fun LiveMicrophoneListener(
                 style = MaterialTheme.typography.bodySmall
             )
             Text(status)
-            Text("Select the device in the dropdown above. TURN relay may be required on some networks. Admin must be connected to hear audio.", style = MaterialTheme.typography.bodySmall)
+            Text("If this active owner-started session is interrupted, Admin will attempt to reconnect for up to 2 minutes. Select another phone above to listen to it. TURN relay may be needed on mobile networks.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
