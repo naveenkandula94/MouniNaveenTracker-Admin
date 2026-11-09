@@ -100,6 +100,39 @@ fun SimpleAdminScreen() {
         }
     }
 
+    // Live Firebase device status: no Admin-side collection or polling required.
+    DisposableEffect(authenticated, auth.currentUser?.uid) {
+        val uid = auth.currentUser?.uid
+        if (authenticated && uid != null) {
+            val subscription = db.collection("devices")
+                .whereEqualTo("adminUid", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        status = "Device status listener: ${error.localizedMessage}"
+                    } else if (snapshot != null) {
+                        devices = snapshot.documents.map { doc ->
+                            SimpleDevice(
+                                doc.id,
+                                doc.getString("displayName") ?: "My device",
+                                doc.getString("collectorUid") ?: "",
+                                doc.getBoolean("enabled") != false,
+                                doc.getTimestamp("lastSyncAt")?.toDate()?.time ?: 0L,
+                                doc.getString("lastSyncStatus") ?: "Not synced yet"
+                            )
+                        }.sortedWith(
+                            compareByDescending<SimpleDevice> { it.lastSyncMillis }
+                                .thenBy { it.name }
+                        )
+                        if (selectedDeviceId == null ||
+                            devices.none { it.id == selectedDeviceId }) {
+                            selectedDeviceId = devices.firstOrNull()?.id
+                        }
+                    }
+                }
+            onDispose { subscription.remove() }
+        } else onDispose { }
+    }
+
     LaunchedEffect(auth.currentUser?.uid) {
         if (auth.currentUser != null && !authenticated) {
             try { verifyAndLoad() }
@@ -245,7 +278,18 @@ fun SimpleAdminScreen() {
                             Column(Modifier.padding(14.dp)) {
                                 Text(device.name, style = MaterialTheme.typography.titleMedium)
                                 Text(if (device.enabled) "Enrollment enabled" else "Enrollment disabled", style = MaterialTheme.typography.bodySmall)
-                                Text("Last sync: ${device.lastSyncStatus}", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    if (device.lastSyncMillis == 0L) "No recent Personal_App lock sync"
+                                    else "Last check: ${SimpleDateFormat("dd MMM HH:mm:ss", Locale.getDefault()).format(Date(device.lastSyncMillis))}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    if (System.currentTimeMillis() - device.lastSyncMillis <= 120_000L) "● Checked recently"
+                                    else "○ Not recently checked (phone may be in background)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (System.currentTimeMillis() - device.lastSyncMillis <= 120_000L)
+                                        Color(0xFF14836A) else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
