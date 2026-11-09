@@ -70,20 +70,23 @@ service cloud.firestore {
        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answer','status'])
        && resource.data.status == 'OFFERED'
        && request.resource.data.status == 'ANSWERED');
-    allow delete: if false;
+    // The enrolled Admin may erase signaling records for its own device.
+    allow delete: if isOwner(deviceId);
     match /publisherIce/{candidateId} {
      allow read: if isOwner(deviceId) || isCollector(deviceId);
      allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
        && request.resource.data.keys().hasOnly(['sdp','mid','line'])
        && request.resource.data.sdp is string && request.resource.data.mid is string && request.resource.data.line is int;
-     allow update, delete: if false;
+     allow update: if false;
+     allow delete: if isOwner(deviceId);
     }
     match /listenerIce/{candidateId} {
      allow read: if isOwner(deviceId) || isCollector(deviceId);
      allow create: if isOwner(deviceId)
        && request.resource.data.keys().hasOnly(['sdp','mid','line'])
        && request.resource.data.sdp is string && request.resource.data.mid is string && request.resource.data.line is int;
-     allow update, delete: if false;
+     allow update: if false;
+     allow delete: if isOwner(deviceId);
     }
    }
   }
