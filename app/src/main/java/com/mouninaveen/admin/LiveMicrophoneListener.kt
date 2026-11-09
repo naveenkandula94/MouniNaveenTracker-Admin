@@ -1,5 +1,10 @@
 package com.mouninaveen.admin
 
+import android.content.Context
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.os.Build
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
@@ -39,6 +44,7 @@ fun LiveMicrophoneListener(
     onStatus: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
+    val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val db = remember { FirebaseFirestore.getInstance() }
     val auth = remember { FirebaseAuth.getInstance() }
     val scope = rememberCoroutineScope()
@@ -49,6 +55,8 @@ fun LiveMicrophoneListener(
     var listening by remember { mutableStateOf<ListeningSession?>(null) }
     var busy by remember { mutableStateOf(false) }
     var audioLevel by remember { mutableFloatStateOf(0f) }
+    var playbackMuted by remember { mutableStateOf(false) }
+    var speakerEnabled by remember { mutableStateOf(true) }
 
     // Dispose only the session owned by this effect instance. Reading mutable
     // listening state in onDispose closed a newly connected WebRTC peer.
@@ -104,6 +112,40 @@ fun LiveMicrophoneListener(
     DisposableEffect(listening) {
         val currentSession = listening
         onDispose { currentSession?.stop() }
+    }
+
+    // Output controls belong exclusively to the selected incoming Admin stream.
+    // Switching devices disconnects the prior session before applying these.
+    LaunchedEffect(listening, playbackMuted, speakerEnabled) {
+        listening?.peer?.setPlaybackMuted(playbackMuted)
+        if (listening != null) {
+            try {
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                if (Build.VERSION.SDK_INT >= 31) {
+                    val outputType = if (speakerEnabled)
+                        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                    else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                    val target = audioManager.availableCommunicationDevices
+                        .firstOrNull { it.type == outputType }
+                    if (target != null) audioManager.setCommunicationDevice(target)
+                    else audioManager.clearCommunicationDevice()
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.isSpeakerphoneOn = speakerEnabled
+                }
+            } catch (e: Exception) {
+                status = "Audio output routing: ${e.localizedMessage}"
+            }
+        } else {
+            if (Build.VERSION.SDK_INT >= 31) audioManager.clearCommunicationDevice()
+            audioManager.mode = AudioManager.MODE_NORMAL
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            if (Build.VERSION.SDK_INT >= 31) audioManager.clearCommunicationDevice()
+            audioManager.mode = AudioManager.MODE_NORMAL
+        }
     }
 
     LaunchedEffect(listening) {
@@ -223,6 +265,37 @@ fun LiveMicrophoneListener(
                 }) { Text("Disconnect") }
             }
 
+            if (listening != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Loudspeaker", style = MaterialTheme.typography.titleSmall)
+                        Text(if (speakerEnabled) "Speaker output" else "Earpiece / default output",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(
+                        checked = speakerEnabled,
+                        onCheckedChange = { speakerEnabled = it }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Mute this phone", style = MaterialTheme.typography.titleSmall)
+                        Text("Only mutes playback in Admin_App. Personal_App keeps its own controls.",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(
+                        checked = playbackMuted,
+                        onCheckedChange = { playbackMuted = it }
+                    )
+                }
+            }
+
             AudioLevelMeter(
                 label = "Incoming sound • live volume",
                 level = audioLevel,
@@ -234,7 +307,7 @@ fun LiveMicrophoneListener(
                 style = MaterialTheme.typography.bodySmall
             )
             Text(status)
-            Text("Keep both apps open. If connectivity fails on mobile data, a TURN relay may be required.", style = MaterialTheme.typography.bodySmall)
+            Text("Select the device in the dropdown above. TURN relay may be required on some networks. Admin must be connected to hear audio.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
